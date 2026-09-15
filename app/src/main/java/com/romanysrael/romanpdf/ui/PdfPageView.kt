@@ -2,20 +2,21 @@ package com.romanysrael.romanpdf.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
-import android.os.SystemClock
 import com.romanysrael.romanpdf.core.DocumentRenderEngine
 import com.romanysrael.romanpdf.data.InkPoint
 import com.romanysrael.romanpdf.data.Stroke
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
@@ -23,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 object AnnotationTools {
     const val NONE = "NONE"
@@ -33,7 +35,7 @@ object AnnotationTools {
 
 enum class TapZone { LEFT, CENTER, RIGHT }
 
-/** A page-sized canvas with a tiny bitmap working set and normalized vector ink. */
+/** A page-sized canvas with a bounded bitmap working set and normalized vector ink. */
 class PdfPageView(context: Context) : View(context) {
     var onPageTap: ((pageIndex: Int, zone: TapZone) -> Unit)? = null
     var onStrokeCommitted: ((Stroke) -> Unit)? = null
@@ -43,13 +45,14 @@ class PdfPageView(context: Context) : View(context) {
     private var renderScope: CoroutineScope? = null
     private var renderJob: Job? = null
     private var boundPageIndex = -1
-    private var bitmap: android.graphics.Bitmap? = null
+    private var bitmap: Bitmap? = null
     private val pageRect = RectF()
     private var strokes: List<Stroke> = emptyList()
     private var activePoints = ArrayList<InkPoint>(64)
     private var activeStroke: Stroke? = null
     private var activePath = Path()
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private var mode = ReaderMode.VIEW
     private var tool = AnnotationTools.NONE
     private var inkColor = Color.rgb(34, 74, 150)
     private var inkWidth = 0.0045f
@@ -61,6 +64,11 @@ class PdfPageView(context: Context) : View(context) {
     private var downX = 0f
     private var downY = 0f
     private var moved = false
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
+    private var multiTouch = false
+    private var ignoreSinglePointerUntilDown = false
+    private var lastFocusX = 0f
+    private var lastFocusY = 0f
     private var eraserHits = LinkedHashSet<Long>()
     private var lastTapAt = 0L
     private var lastTapX = 0f
@@ -113,6 +121,9 @@ class PdfPageView(context: Context) : View(context) {
         renderScope = scope
         strokes = pageStrokes
         cancelPendingTap()
+        cancelActiveAnnotation()
+        multiTouch = false
+        ignoreSinglePointerUntilDown = false
         resetZoom()
         if (width > 0 && height > 0) requestRender()
         invalidate()
@@ -122,14 +133,14 @@ class PdfPageView(context: Context) : View(context) {
         renderJob?.cancel()
         renderJob = null
         cancelPendingTap()
+        cancelActiveAnnotation()
         recycleBitmap()
         renderer = null
         renderScope = null
         boundPageIndex = -1
         strokes = emptyList()
-        activePoints.clear()
-        activeStroke = null
-        activePath.reset()
+        multiTouch = false
+        ignoreSinglePointerUntilDown = false
     }
 
     fun setStrokes(newStrokes: List<Stroke>) {
@@ -137,10 +148,20 @@ class PdfPageView(context: Context) : View(context) {
         invalidate()
     }
 
+    fun setMode(newMode: ReaderMode) {
+        mode = newMode
+        if (newMode == ReaderMode.VIEW) {
+            cancelActiveAnnotation()
+            eraserHits.clear()
+        }
+        invalidate()
+    }
+
     fun setTool(newTool: String) {
-        tool = newTool
-        if (newTool != AnnotationTools.NONE) cancelPendingTap()
-        if (newTool == AnnotationTools.NONE) resetZoom()
+        tool = if (mode == ReaderMode.EDIT) newTool else AnnotationTools.NONE
+        if (tool != AnnotationTools.NONE) cancelPendingTap()
+        cancelActiveAnnotation()
+        eraserHits.clear()
         invalidate()
     }
 
@@ -164,6 +185,7 @@ class PdfPageView(context: Context) : View(context) {
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        resetZoom()
         requestRender()
     }
 
@@ -262,121 +284,135 @@ class PdfPageView(context: Context) : View(context) {
         scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                ensurePageRect()
+                activePointerId = event.getPointerId(0)
                 downX = event.x
                 downY = event.y
                 lastX = event.x
                 lastY = event.y
                 moved = false
+                multiTouch = false
+                ignoreSinglePointerUntilDown = false
                 eraserHits.clear()
-                if (tool == AnnotationTools.PEN || tool == AnnotationTools.HIGHLIGHT) {
-                    activePoints.clear()
-                    activeStroke = Stroke(
-                        documentId = 0L,
-                        pageIndex = boundPageIndex,
-                        tool = tool,
-                        color = inkColor,
-                        width = if (tool == AnnotationTools.HIGHLIGHT) 0.014f else inkWidth,
-                        points = activePoints
-                    )
-                    activePath.reset()
-                    toNormalized(event.x, event.y)?.let { point ->
-                        activePoints.add(point)
-                        activePath.moveTo(event.x, event.y)
-                    }
-                } else if (tool == AnnotationTools.ERASER) {
-                    toNormalized(event.x, event.y)?.let(::findHits)
-                }
-                // Hold the first few pixels locally so a second tap can be recognized as a double tap.
-                // Reading-mode swipes release the parent again once movement is unambiguous.
                 parent?.requestDisallowInterceptTouchEvent(true)
+                if (ReaderInteractionPolicy.canDraw(mode, tool)) {
+                    startAnnotation(event.x, event.y)
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (event.pointerCount >= 2) {
+                    moved = true
+                    multiTouch = true
+                    cancelPendingTap()
+                    if (ReaderInteractionPolicy.shouldCancelAnnotationForSecondPointer(mode)) {
+                        cancelActiveAnnotation()
+                        eraserHits.clear()
+                    }
+                    val focus = focusOf(event)
+                    lastFocusX = focus.first
+                    lastFocusY = focus.second
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (event.pointerCount > 1 || scaleFactor > 1.01f) {
-                    if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
-                        offsetX += event.x - lastX
-                        offsetY += event.y - lastY
-                        boundPan()
-                    }
+                if (event.pointerCount > 1 || multiTouch) {
                     moved = true
-                    lastX = event.x
-                    lastY = event.y
+                    multiTouch = true
+                    val focus = focusOf(event)
+                    offsetX += focus.first - lastFocusX
+                    offsetY += focus.second - lastFocusY
+                    lastFocusX = focus.first
+                    lastFocusY = focus.second
+                    boundPan()
                     invalidate()
                     return true
                 }
-                if (tool == AnnotationTools.PEN || tool == AnnotationTools.HIGHLIGHT) {
-                    toNormalized(event.x, event.y)?.let { point ->
-                        if (activePoints.lastOrNull()?.let { distance(it, point) } ?: 1f > 0.001f) {
-                            activePoints.add(point)
-                            activePath.lineTo(event.x, event.y)
+                if (ignoreSinglePointerUntilDown) return true
+
+                val pointerIndex = event.findPointerIndex(activePointerId).takeIf { it >= 0 } ?: 0
+                val x = event.getX(pointerIndex)
+                val y = event.getY(pointerIndex)
+                if (ReaderInteractionPolicy.canDraw(mode, tool)) {
+                    if (tool == AnnotationTools.PEN || tool == AnnotationTools.HIGHLIGHT) {
+                        toNormalized(x, y)?.let { point ->
+                            if (activePoints.lastOrNull()?.let { distance(it, point) } ?: 1f > 0.0008f) {
+                                activePoints.add(point)
+                                activePath.lineTo(x, y)
+                                moved = true
+                                invalidate()
+                            }
+                        }
+                    } else if (tool == AnnotationTools.ERASER) {
+                        toNormalized(x, y)?.let { point ->
+                            findHits(point)
                             moved = true
-                            invalidate()
                         }
                     }
-                } else if (tool == AnnotationTools.ERASER) {
-                    toNormalized(event.x, event.y)?.let { point ->
-                        findHits(point)
-                        moved = true
-                    }
-                } else if (distance(downX, downY, event.x, event.y) > 18f) {
+                } else if (scaleFactor > 1.01f) {
+                    offsetX += x - lastX
+                    offsetY += y - lastY
+                    boundPan()
+                    moved = true
+                    invalidate()
+                } else if (distance(downX, downY, x, y) > 18f) {
                     moved = true
                     parent?.requestDisallowInterceptTouchEvent(false)
                 }
-                lastX = event.x
-                lastY = event.y
+                lastX = x
+                lastY = y
                 return true
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (event.pointerCount >= 2) {
+                    moved = true
+                    multiTouch = true
+                    ignoreSinglePointerUntilDown = true
+                    cancelActiveAnnotation()
+                    eraserHits.clear()
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
                 parent?.requestDisallowInterceptTouchEvent(false)
-                if (event.actionMasked == MotionEvent.ACTION_UP) {
-                    if (tool == AnnotationTools.PEN || tool == AnnotationTools.HIGHLIGHT) {
-                        if (activePoints.size >= 2) {
-                            onStrokeCommitted?.invoke(
-                                Stroke(
-                                    documentId = 0L,
-                                    pageIndex = boundPageIndex,
-                                    tool = tool,
-                                    color = inkColor,
-                                    width = if (tool == AnnotationTools.HIGHLIGHT) 0.014f else inkWidth,
-                                    points = activePoints.toList()
-                                )
-                            )
-                        }
-                        activePoints.clear()
-                        activeStroke = null
-                        activePath.reset()
-                        invalidate()
-                    } else if (tool == AnnotationTools.ERASER) {
-                        if (eraserHits.isNotEmpty()) onStrokesErased?.invoke(boundPageIndex, eraserHits.toList())
+                if (multiTouch || ignoreSinglePointerUntilDown) {
+                    finishMultiTouch()
+                    return true
+                }
+                if (ReaderInteractionPolicy.canDraw(mode, tool)) {
+                    val now = SystemClock.uptimeMillis()
+                    if (!moved && isDoubleTap(now, event.x, event.y)) {
+                        cancelPendingTap()
+                        cancelActiveAnnotation()
                         eraserHits.clear()
-                    } else if (!moved) {
-                        val now = SystemClock.uptimeMillis()
-                        val isDoubleTap = now - lastTapAt in 1..360 &&
-                            distance(lastTapX, lastTapY, event.x, event.y) < 72f
-                        if (isDoubleTap) {
-                            cancelPendingTap()
-                            performClick()
-                            if (scaleFactor > 1.05f) resetZoom() else zoomAt(event.x, event.y)
-                            lastTapAt = 0L
-                            return true
-                        }
-                        val zone = when {
-                            event.x < width * 0.28f -> TapZone.LEFT
-                            event.x > width * 0.72f -> TapZone.RIGHT
-                            else -> TapZone.CENTER
-                        }
-                        scheduleTap(now, zone, dispatch = scaleFactor <= 1.01f)
+                        resetZoom()
+                        lastTapAt = 0L
+                    } else {
+                        finishAnnotation()
+                        if (!moved) rememberEditTap(event.x, event.y)
                     }
+                } else if (!moved) {
+                    handleTap(event.x, event.y)
                 } else {
                     cancelPendingTap()
-                    activePoints.clear()
-                    activeStroke = null
-                    activePath.reset()
-                    eraserHits.clear()
-                    invalidate()
                 }
+                activePointerId = MotionEvent.INVALID_POINTER_ID
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+                cancelPendingTap()
+                cancelActiveAnnotation()
+                eraserHits.clear()
+                activePointerId = MotionEvent.INVALID_POINTER_ID
+                multiTouch = false
+                ignoreSinglePointerUntilDown = false
                 return true
             }
         }
@@ -388,11 +424,95 @@ class PdfPageView(context: Context) : View(context) {
         return true
     }
 
-    private fun scheduleTap(timestamp: Long, zone: TapZone, dispatch: Boolean) {
+    private fun startAnnotation(x: Float, y: Float) {
+        if (tool == AnnotationTools.PEN || tool == AnnotationTools.HIGHLIGHT) {
+            activePoints.clear()
+            activeStroke = Stroke(
+                documentId = 0L,
+                pageIndex = boundPageIndex,
+                tool = tool,
+                color = inkColor,
+                width = if (tool == AnnotationTools.HIGHLIGHT) 0.014f else inkWidth,
+                points = activePoints
+            )
+            activePath.reset()
+            toNormalized(x, y)?.let { point ->
+                activePoints.add(point)
+                activePath.moveTo(x, y)
+            }
+        } else if (tool == AnnotationTools.ERASER) {
+            toNormalized(x, y)?.let(::findHits)
+        }
+    }
+
+    private fun finishAnnotation() {
+        if (tool == AnnotationTools.PEN || tool == AnnotationTools.HIGHLIGHT) {
+            if (activePoints.size >= 2) {
+                onStrokeCommitted?.invoke(
+                    Stroke(
+                        documentId = 0L,
+                        pageIndex = boundPageIndex,
+                        tool = tool,
+                        color = inkColor,
+                        width = if (tool == AnnotationTools.HIGHLIGHT) 0.014f else inkWidth,
+                        points = activePoints.toList()
+                    )
+                )
+            }
+            activePoints.clear()
+            activeStroke = null
+            activePath.reset()
+            invalidate()
+        } else if (tool == AnnotationTools.ERASER) {
+            if (eraserHits.isNotEmpty()) onStrokesErased?.invoke(boundPageIndex, eraserHits.toList())
+            eraserHits.clear()
+        }
+    }
+
+    private fun handleTap(x: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        val zone = when {
+            x < width * 0.28f -> TapZone.LEFT
+            x > width * 0.72f -> TapZone.RIGHT
+            else -> TapZone.CENTER
+        }
+        val isDoubleTap = zone == TapZone.CENTER && isDoubleTap(now, x, y)
+        if (isDoubleTap) {
+            cancelPendingTap()
+            performClick()
+            if (mode == ReaderMode.VIEW && scaleFactor <= 1.05f) zoomAt(x, y) else resetZoom()
+            lastTapAt = 0L
+            return
+        }
+        lastTapAt = now
+        lastTapX = x
+        lastTapY = y
+        if (mode == ReaderMode.EDIT) return
+
+        if (zone != TapZone.CENTER && scaleFactor <= 1.01f) {
+            cancelPendingTap()
+            lastTapAt = 0L
+            performClick()
+            onPageTap?.invoke(boundPageIndex, zone)
+        } else {
+            scheduleTap(now, zone, x, y, dispatch = scaleFactor <= 1.01f)
+        }
+    }
+
+    private fun rememberEditTap(x: Float, y: Float) {
+        lastTapAt = SystemClock.uptimeMillis()
+        lastTapX = x
+        lastTapY = y
+    }
+
+    private fun isDoubleTap(now: Long, x: Float, y: Float): Boolean =
+        now - lastTapAt in 1..DOUBLE_TAP_TIMEOUT_MS && distance(lastTapX, lastTapY, x, y) < DOUBLE_TAP_DISTANCE
+
+    private fun scheduleTap(timestamp: Long, zone: TapZone, x: Float, y: Float, dispatch: Boolean) {
         cancelPendingTap()
         lastTapAt = timestamp
-        lastTapX = downX
-        lastTapY = downY
+        lastTapX = x
+        lastTapY = y
         val page = boundPageIndex
         val callback = Runnable {
             if (lastTapAt == timestamp) {
@@ -421,12 +541,19 @@ class PdfPageView(context: Context) : View(context) {
     }
 
     private fun toNormalized(screenX: Float, screenY: Float): InkPoint? {
-        val baseX = (screenX - offsetX) / scaleFactor
-        val baseY = (screenY - offsetY) / scaleFactor
-        if (!pageRect.contains(baseX, baseY)) return null
+        ensurePageRect()
+        val point = PageTransform(
+            left = pageRect.left,
+            top = pageRect.top,
+            width = pageRect.width(),
+            height = pageRect.height(),
+            scale = scaleFactor,
+            offsetX = offsetX,
+            offsetY = offsetY
+        ).screenToNormalized(screenX, screenY) ?: return null
         return InkPoint(
-            x = ((baseX - pageRect.left) / pageRect.width()).coerceIn(0f, 1f),
-            y = ((baseY - pageRect.top) / pageRect.height()).coerceIn(0f, 1f),
+            x = point.x,
+            y = point.y,
             pressure = 1f,
             time = System.currentTimeMillis()
         )
@@ -447,22 +574,55 @@ class PdfPageView(context: Context) : View(context) {
             offsetY = 0f
             return
         }
-        val maxX = width * 0.55f
-        val maxY = height * 0.55f
+        ensurePageRect()
+        val maxX = max(24f, (pageRect.width() * scaleFactor - width) / 2f + 24f)
+        val maxY = max(24f, (pageRect.height() * scaleFactor - height) / 2f + 24f)
         offsetX = offsetX.coerceIn(-maxX, maxX)
         offsetY = offsetY.coerceIn(-maxY, maxY)
+    }
+
+    private fun focusOf(event: MotionEvent): Pair<Float, Float> {
+        var x = 0f
+        var y = 0f
+        val count = event.pointerCount.coerceAtLeast(1)
+        for (index in 0 until count) {
+            x += event.getX(index)
+            y += event.getY(index)
+        }
+        return (x / count) to (y / count)
+    }
+
+    private fun finishMultiTouch() {
+        cancelPendingTap()
+        cancelActiveAnnotation()
+        eraserHits.clear()
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+        multiTouch = false
+        ignoreSinglePointerUntilDown = false
+        invalidate()
+    }
+
+    private fun cancelActiveAnnotation() {
+        activePoints.clear()
+        activeStroke = null
+        activePath.reset()
+        invalidate()
+    }
+
+    private fun ensurePageRect() {
+        bitmap?.let { pageRect.set(fitRect(it.width, it.height)) }
     }
 
     private fun distance(a: InkPoint, b: InkPoint): Float {
         val dx = a.x - b.x
         val dy = a.y - b.y
-        return kotlin.math.sqrt(dx * dx + dy * dy)
+        return sqrt(dx * dx + dy * dy)
     }
 
     private fun distance(x1: Float, y1: Float, x2: Float, y2: Float): Float {
         val dx = x1 - x2
         val dy = y1 - y2
-        return kotlin.math.sqrt(dx * dx + dy * dy)
+        return sqrt(dx * dx + dy * dy)
     }
 
     private fun recycleBitmap() {
@@ -473,10 +633,13 @@ class PdfPageView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         renderJob?.cancel()
         cancelPendingTap()
+        cancelActiveAnnotation()
         super.onDetachedFromWindow()
     }
 
     private companion object {
-        const val DOUBLE_TAP_DELAY_MS = 300L
+        const val DOUBLE_TAP_DELAY_MS = 280L
+        const val DOUBLE_TAP_TIMEOUT_MS = 360L
+        const val DOUBLE_TAP_DISTANCE = 72f
     }
 }

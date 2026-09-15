@@ -12,6 +12,10 @@
         android:title="@string/export"
         app:showAsAction="ifRoom" />
     <item
+        android:id="@+id/action_fullscreen"
+        android:title="@string/enter_fullscreen"
+        app:showAsAction="never" />
+    <item
         android:id="@+id/action_recognize"
         android:title="@string/recognize_handwriting"
         app:showAsAction="never" />

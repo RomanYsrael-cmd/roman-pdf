@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/reader_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -50,6 +51,33 @@
             android:paddingEnd="4dp">
 
             <ImageButton
+                android:id="@+id/mode_button"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/switch_to_edit"
+                android:src="@drawable/ic_view" />
+
+            <TextView
+                android:id="@+id/mode_indicator"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="2dp"
+                android:layout_marginEnd="4dp"
+                android:minWidth="64dp"
+                android:text="@string/view_mode"
+                android:textColor="@color/roman_ink"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/annotation_tools_group"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+            <ImageButton
                 android:id="@+id/pen_button"
                 android:layout_width="52dp"
                 android:layout_height="52dp"
@@ -96,6 +124,15 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/add_note"
                 android:src="@drawable/ic_note" />
+
+            <ImageButton
+                android:id="@+id/color_button"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/annotation_color_default"
+                android:src="@drawable/ic_color" />
+            </LinearLayout>
         </LinearLayout>
     </HorizontalScrollView>
 </LinearLayout>

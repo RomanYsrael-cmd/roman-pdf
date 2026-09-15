@@ -1,0 +1,13 @@
+<resources>
+    <color name="roman_blue">#3F6FB7</color>
+    <color name="roman_blue_dark">#294B88</color>
+    <color name="roman_ink">#F2F4F7</color>
+    <color name="roman_paper">#101318</color>
+    <color name="roman_muted">#B5C0D0</color>
+    <color name="roman_surface">#1B222C</color>
+    <color name="roman_on_surface">#F2F4F7</color>
+    <color name="roman_on_surface_variant">#C2CBD8</color>
+    <color name="roman_outline">#596778</color>
+    <color name="roman_thumbnail_placeholder">#2A3441</color>
+    <color name="roman_search_highlight">#806B24</color>
+</resources>

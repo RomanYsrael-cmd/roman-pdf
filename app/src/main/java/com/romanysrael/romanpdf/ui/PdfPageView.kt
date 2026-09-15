@@ -2,6 +2,7 @@ package com.romanysrael.romanpdf.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -9,16 +10,20 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.os.SystemClock
+import android.util.Log
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import com.romanysrael.romanpdf.R
 import com.romanysrael.romanpdf.core.DocumentRenderEngine
 import com.romanysrael.romanpdf.data.InkPoint
 import com.romanysrael.romanpdf.data.Stroke
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -43,46 +48,60 @@ data class PageBitmapKey(
     val targetHeight: Int
 )
 
-/** Small shared reader cache with reference counting for displayed and prefetched bitmaps. */
-class PageBitmapCache(private val maxEntries: Int = 3) {
-    private data class Entry(val key: PageBitmapKey, val bitmap: Bitmap)
+enum class PageRenderState {
+    NOT_REQUESTED,
+    RENDERING,
+    READY,
+    FAILED
+}
 
-    private val entries = LinkedHashMap<PageBitmapKey, Entry>(maxEntries, 0.75f, true)
+/** A cache lease keeps a bitmap live for exactly one displayed/prefetch consumer. */
+class PageBitmapCache(private val maxEntries: Int = 3) {
+    class Lease internal constructor(
+        val key: PageBitmapKey,
+        val bitmap: Bitmap
+    ) {
+        internal var released = false
+    }
+
+    private data class Entry(val bitmap: Bitmap)
+
+    private val entries = LinkedHashMap<PageBitmapKey, Entry>(maxEntries.coerceAtLeast(1), 0.75f, true)
     private val references = IdentityHashMap<Bitmap, Int>()
 
     @Synchronized
-    fun acquire(key: PageBitmapKey): Bitmap? {
+    fun acquire(key: PageBitmapKey): Lease? {
         val entry = entries[key] ?: return null
-        if (entry.bitmap.isRecycled) {
+        if (!isUsable(entry.bitmap)) {
             entries.remove(key)
             references.remove(entry.bitmap)
             return null
         }
         references[entry.bitmap] = (references[entry.bitmap] ?: 0) + 1
-        return entry.bitmap
+        return Lease(key, entry.bitmap)
     }
 
     @Synchronized
-    fun put(key: PageBitmapKey, bitmap: Bitmap): Bitmap {
+    fun put(key: PageBitmapKey, bitmap: Bitmap): Bitmap? {
+        if (!isUsable(bitmap)) return null
         val existing = entries[key]
         if (existing != null) {
-            if (existing.bitmap.isRecycled) {
+            if (!isUsable(existing.bitmap)) {
                 entries.remove(key)
                 references.remove(existing.bitmap)
             } else {
-                if (existing.bitmap !== bitmap && !bitmap.isRecycled) bitmap.recycle()
+                recycleIfUnreferenced(bitmap)
                 return existing.bitmap
             }
         }
-        if (bitmap.isRecycled) return bitmap
-        entries[key] = Entry(key, bitmap)
+        entries[key] = Entry(bitmap)
         references.putIfAbsent(bitmap, 0)
         while (entries.size > maxEntries) {
             val eldestKey = entries.entries.first().key
             val eldest = entries.remove(eldestKey)?.bitmap ?: continue
             if ((references[eldest] ?: 0) == 0) {
                 references.remove(eldest)
-                if (!eldest.isRecycled) eldest.recycle()
+                recycleIfUnreferenced(eldest)
             }
         }
         return bitmap
@@ -91,7 +110,7 @@ class PageBitmapCache(private val maxEntries: Int = 3) {
     @Synchronized
     fun contains(key: PageBitmapKey): Boolean {
         val bitmap = entries[key]?.bitmap ?: return false
-        if (bitmap.isRecycled) {
+        if (!isUsable(bitmap)) {
             entries.remove(key)
             references.remove(bitmap)
             return false
@@ -100,13 +119,15 @@ class PageBitmapCache(private val maxEntries: Int = 3) {
     }
 
     @Synchronized
-    fun release(key: PageBitmapKey, bitmap: Bitmap) {
-        val count = references[bitmap] ?: return
+    fun release(lease: Lease) {
+        if (lease.released) return
+        lease.released = true
+        val count = references[lease.bitmap] ?: return
         if (count <= 1) {
-            references.remove(bitmap)
-            if (entries[key]?.bitmap !== bitmap && !bitmap.isRecycled) bitmap.recycle()
+            references.remove(lease.bitmap)
+            recycleIfUnreferenced(lease.bitmap)
         } else {
-            references[bitmap] = count - 1
+            references[lease.bitmap] = count - 1
         }
     }
 
@@ -117,11 +138,55 @@ class PageBitmapCache(private val maxEntries: Int = 3) {
         cached.forEach { bitmap ->
             if ((references[bitmap] ?: 0) == 0) {
                 references.remove(bitmap)
-                if (!bitmap.isRecycled) bitmap.recycle()
+                recycleIfUnreferenced(bitmap)
             }
         }
     }
+
+    @Synchronized
+    fun entryCount(): Int = entries.size
+
+    @Synchronized
+    fun retainedBitmapCount(): Int = references.size
+
+    private fun isUsable(bitmap: Bitmap): Boolean = !bitmap.isRecycled && bitmap.width > 0 && bitmap.height > 0
+
+    private fun recycleIfUnreferenced(bitmap: Bitmap) {
+        if ((references[bitmap] ?: 0) == 0 && entries.values.none { it.bitmap === bitmap } && !bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+    }
 }
+
+/** Token used to reject an async result after a view has been rebound or resized. */
+data class PageRenderToken(
+    val bindingGeneration: Long,
+    val requestId: Long,
+    val key: PageBitmapKey
+)
+
+class PageRenderGate {
+    private var generation = 0L
+    private var requestId = 0L
+
+    @Synchronized
+    fun newBinding(): Long {
+        requestId = 0L
+        return ++generation
+    }
+
+    @Synchronized
+    fun begin(key: PageBitmapKey): PageRenderToken = PageRenderToken(generation, ++requestId, key)
+
+    @Synchronized
+    fun accepts(token: PageRenderToken, current: PageRenderToken?): Boolean =
+        current != null && token == current
+
+    @Synchronized
+    fun currentGeneration(): Long = generation
+}
+
+private fun Bitmap.isUsablePageBitmap(): Boolean = !isRecycled && width > 0 && height > 0
 
 /** A page-sized canvas with a bounded bitmap working set and normalized vector ink. */
 class PdfPageView(context: Context) : View(context) {
@@ -132,12 +197,20 @@ class PdfPageView(context: Context) : View(context) {
     private var renderer: DocumentRenderEngine? = null
     private var renderScope: CoroutineScope? = null
     private var renderJob: Job? = null
+    private var renderDispatcher: CoroutineDispatcher = Dispatchers.IO
     private var boundPageIndex = -1
     private var documentPageCount = 1
     private var bitmap: Bitmap? = null
+    private var displayedLease: PageBitmapCache.Lease? = null
     private var displayedPageIndex = -1
     private var displayedBitmapKey: PageBitmapKey? = null
     private var bitmapCache: PageBitmapCache? = null
+    private val renderGate = PageRenderGate()
+    @Volatile
+    private var requestedToken: PageRenderToken? = null
+    private var renderState = PageRenderState.NOT_REQUESTED
+    private var recoveryRunnable: Runnable? = null
+    private var recoveryGeneration = -1L
     private val pageRect = RectF()
     private var strokes: List<Stroke> = emptyList()
     private var activePoints = ArrayList<InkPoint>(64)
@@ -205,27 +278,39 @@ class PdfPageView(context: Context) : View(context) {
         renderEngine: DocumentRenderEngine,
         scope: CoroutineScope,
         pageStrokes: List<Stroke>,
-        pageCount: Int = 1
+        pageCount: Int = 1,
+        dispatcher: CoroutineDispatcher = Dispatchers.IO
     ) {
         if (renderer != null && renderer !== renderEngine) releaseDisplayedBitmap()
         renderJob?.cancel()
+        cancelRecovery()
+        renderGate.newBinding()
+        requestedToken = null
         boundPageIndex = pageIndex
         documentPageCount = pageCount.coerceAtLeast(1)
         renderer = renderEngine
         renderScope = scope
+        renderDispatcher = dispatcher
         strokes = pageStrokes
         cancelPendingTap()
         cancelActiveAnnotation()
         multiTouch = false
         ignoreSinglePointerUntilDown = false
         resetZoom()
+        renderState = PageRenderState.NOT_REQUESTED
         if (width > 0 && height > 0) requestRender()
+        else post {
+            if (boundPageIndex == pageIndex && renderer === renderEngine) requestRender()
+        }
         invalidate()
     }
 
     fun unbind() {
         renderJob?.cancel()
         renderJob = null
+        cancelRecovery()
+        renderGate.newBinding()
+        requestedToken = null
         cancelPendingTap()
         cancelActiveAnnotation()
         releaseDisplayedBitmap()
@@ -236,6 +321,7 @@ class PdfPageView(context: Context) : View(context) {
         documentPageCount = 1
         multiTouch = false
         ignoreSinglePointerUntilDown = false
+        renderState = PageRenderState.NOT_REQUESTED
     }
 
     fun setStrokes(newStrokes: List<Stroke>) {
@@ -275,6 +361,10 @@ class PdfPageView(context: Context) : View(context) {
         bitmapCache = cache
     }
 
+    fun renderState(): PageRenderState = renderState
+
+    fun hasUsableBitmap(): Boolean = bitmap?.isUsablePageBitmap() == true
+
     fun resetZoom() {
         scaleFactor = 1f
         offsetX = 0f
@@ -293,70 +383,168 @@ class PdfPageView(context: Context) : View(context) {
         val currentRenderer = renderer ?: return
         val scope = renderScope ?: return
         if (page < 0 || width <= 0 || height <= 0) return
+
         renderJob?.cancel()
         val targetWidth = (width - 24).coerceAtLeast(240)
         val targetHeight = (height - 24).coerceAtLeast(240)
         val key = PageBitmapKey(page, targetWidth, targetHeight)
+        val token = renderGate.begin(key)
+        requestedToken = token
+        renderState = PageRenderState.RENDERING
+        invalidate()
+
         val cache = bitmapCache
-        renderJob = scope.launch(Dispatchers.IO) {
-            var prepared = cache?.acquire(key)
-            if (prepared == null) {
-                val rendered = runCatching {
-                    currentRenderer.renderPage(page, targetWidth, targetHeight)
-                }.getOrNull()
-                if (rendered == null) return@launch
-                if (!isActive) {
-                    rendered.recycle()
-                    return@launch
+        renderJob = scope.launch(renderDispatcher) {
+            var lease = cache?.acquire(key)
+            var uncachedBitmap: Bitmap? = null
+            var failure: Throwable? = null
+
+            if (lease == null) {
+                val rendered = renderWithRetry(currentRenderer, page, targetWidth, targetHeight) { error ->
+                    failure = error
                 }
-                prepared = if (cache == null) rendered else {
-                    cache.put(key, rendered)
-                    cache.acquire(key)
+                if (rendered != null && isActive) {
+                    if (cache == null) {
+                        uncachedBitmap = rendered
+                    } else {
+                        cache.put(key, rendered)
+                        lease = cache.acquire(key)
+                    }
                 }
             }
-            val displayed = prepared ?: return@launch
-            if (!isActive) {
-                releasePrepared(cache, key, displayed)
+
+            val prepared = lease?.bitmap ?: uncachedBitmap
+            if (prepared == null || !prepared.isUsablePageBitmap()) {
+                releasePrepared(cache, lease)
+                if (isActive) reportRenderFailure(token, failure)
                 return@launch
             }
+            if (!isActive) {
+                releasePrepared(cache, lease)
+                return@launch
+            }
+
             try {
-                withContext(Dispatchers.Main) {
-                    if (boundPageIndex == page && renderer === currentRenderer) {
-                        releaseDisplayedBitmap()
-                        bitmap = displayed
-                        displayedPageIndex = page
-                        displayedBitmapKey = key.takeIf { cache != null }
-                        invalidate()
+                withContext(Dispatchers.Main.immediate) {
+                    if (renderGate.accepts(token, requestedToken) &&
+                        boundPageIndex == page &&
+                        renderer === currentRenderer &&
+                        prepared.isUsablePageBitmap()
+                    ) {
+                        installDisplayedBitmap(page, key, lease, prepared)
                     } else {
-                        releasePrepared(cache, key, displayed)
+                        releasePrepared(cache, lease)
                     }
                 }
             } catch (cancelled: CancellationException) {
-                releasePrepared(cache, key, displayed)
+                releasePrepared(cache, lease)
                 throw cancelled
             }
-            if (cache != null && isActive) {
-                ReaderRenderPolicy.prefetchPages(page, documentPageCount).forEach { adjacentPage ->
-                    if (!isActive) return@forEach
-                    val adjacentKey = PageBitmapKey(adjacentPage, targetWidth, targetHeight)
-                    if (cache.contains(adjacentKey)) return@forEach
-                    val adjacent = runCatching {
-                        currentRenderer.renderPage(adjacentPage, targetWidth, targetHeight)
-                    }.getOrNull()
-                    if (adjacent == null || !isActive) {
-                        adjacent?.recycle()
-                    } else {
-                        cache.put(adjacentKey, adjacent)
-                    }
-                }
+
+            if (cache != null && isActive && renderGate.accepts(token, requestedToken)) {
+                prefetchAdjacent(currentRenderer, page, targetWidth, targetHeight, token, cache)
             }
         }
+    }
+
+    private suspend fun renderWithRetry(
+        currentRenderer: DocumentRenderEngine,
+        page: Int,
+        targetWidth: Int,
+        targetHeight: Int,
+        onFailure: (Throwable) -> Unit
+    ): Bitmap? {
+        var rendered: Bitmap? = null
+        repeat(2) { attempt ->
+            if (!currentCoroutineContext().isActive) return null
+            try {
+                rendered = currentRenderer.renderPage(page, targetWidth, targetHeight)
+                if (rendered?.isUsablePageBitmap() == true) return rendered
+                onFailure(IllegalStateException("Render returned no usable bitmap"))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                onFailure(failure)
+            }
+            if (attempt == 0) kotlinx.coroutines.yield()
+        }
+        return null
+    }
+
+    private suspend fun prefetchAdjacent(
+        currentRenderer: DocumentRenderEngine,
+        page: Int,
+        targetWidth: Int,
+        targetHeight: Int,
+        token: PageRenderToken,
+        cache: PageBitmapCache
+    ) {
+        ReaderRenderPolicy.prefetchPages(page, documentPageCount).forEach { adjacentPage ->
+            if (!currentCoroutineContext().isActive) return@forEach
+            val adjacentKey = PageBitmapKey(adjacentPage, targetWidth, targetHeight)
+            if (cache.contains(adjacentKey)) return@forEach
+            val adjacent = try {
+                currentRenderer.renderPage(adjacentPage, targetWidth, targetHeight)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            if (!currentCoroutineContext().isActive || !renderGate.accepts(token, requestedToken)) return@forEach
+            if (adjacent?.isUsablePageBitmap() == true) cache.put(adjacentKey, adjacent)
+        }
+    }
+
+    private suspend fun reportRenderFailure(token: PageRenderToken, failure: Throwable?) {
+        runCatching {
+            withContext(Dispatchers.Main.immediate) {
+                if (!renderGate.accepts(token, requestedToken) ||
+                    boundPageIndex != token.key.pageIndex ||
+                    renderer == null
+                ) return@withContext
+                if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                    Log.w(TAG, "render failed page=${token.key.pageIndex} request=${token.requestId}", failure)
+                }
+                renderState = PageRenderState.FAILED
+                invalidate()
+                scheduleRecovery(token)
+            }
+        }
+    }
+
+    private fun scheduleRecovery(token: PageRenderToken) {
+        if (recoveryGeneration == token.bindingGeneration) return
+        cancelRecovery()
+        recoveryGeneration = token.bindingGeneration
+        val retry = Runnable {
+            recoveryRunnable = null
+            if (renderGate.accepts(token, requestedToken) && renderState == PageRenderState.FAILED) {
+                requestRender()
+            }
+        }
+        recoveryRunnable = retry
+        postDelayed(retry, RENDER_RECOVERY_DELAY_MS)
+    }
+
+    private fun cancelRecovery() {
+        recoveryRunnable?.let(::removeCallbacks)
+        recoveryRunnable = null
+        recoveryGeneration = -1L
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         canvas.drawColor(Color.rgb(16, 19, 24))
-        val pageBitmap = bitmap ?: return
+        val pageBitmap = bitmap?.takeIf { it.isUsablePageBitmap() }
+        if (pageBitmap == null) {
+            if (bitmap != null) {
+                releaseDisplayedBitmap()
+                renderState = PageRenderState.FAILED
+                post { if (boundPageIndex >= 0) requestRender() }
+            }
+            drawRenderPlaceholder(canvas)
+            return
+        }
         pageRect.set(fitRect(pageBitmap.width, pageBitmap.height))
         canvas.save()
         canvas.translate(offsetX, offsetY)
@@ -367,6 +555,21 @@ class PdfPageView(context: Context) : View(context) {
             activeStroke?.let { drawStroke(canvas, it, pageRect) }
         }
         canvas.restore()
+    }
+
+    private fun drawRenderPlaceholder(canvas: Canvas) {
+        canvas.drawColor(Color.rgb(236, 240, 245))
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(45, 58, 76)
+            textAlign = Paint.Align.CENTER
+            textSize = 18f * resources.displayMetrics.density
+        }
+        val message = if (renderState == PageRenderState.FAILED) {
+            context.getString(R.string.render_retrying)
+        } else {
+            context.getString(R.string.rendering_page, (boundPageIndex + 1).coerceAtLeast(1))
+        }
+        canvas.drawText(message, width / 2f, height / 2f, paint)
     }
 
     private fun fitRect(bitmapWidth: Int, bitmapHeight: Int): RectF {
@@ -758,38 +961,58 @@ class PdfPageView(context: Context) : View(context) {
         return sqrt(dx * dx + dy * dy)
     }
 
-    private fun releasePrepared(cache: PageBitmapCache?, key: PageBitmapKey, bitmap: Bitmap) {
-        if (cache == null) {
-            if (!bitmap.isRecycled) bitmap.recycle()
-        } else {
-            cache.release(key, bitmap)
-        }
+    private fun releasePrepared(cache: PageBitmapCache?, lease: PageBitmapCache.Lease?) {
+        if (cache != null) cache.release(lease ?: return)
     }
 
     private fun releaseDisplayedBitmap() {
-        val displayed = bitmap ?: return
-        val key = displayedBitmapKey
-        if (bitmapCache != null && key != null) {
-            bitmapCache?.release(key, displayed)
-        } else if (!displayed.isRecycled) {
-            displayed.recycle()
-        }
+        displayedLease?.let { lease -> bitmapCache?.release(lease) }
         bitmap = null
+        displayedLease = null
         displayedPageIndex = -1
         displayedBitmapKey = null
     }
 
+    private fun installDisplayedBitmap(
+        page: Int,
+        key: PageBitmapKey,
+        lease: PageBitmapCache.Lease?,
+        displayed: Bitmap
+    ) {
+        releaseDisplayedBitmap()
+        bitmap = displayed
+        displayedLease = lease
+        displayedPageIndex = page
+        displayedBitmapKey = key.takeIf { lease != null }
+        renderState = PageRenderState.READY
+        recoveryGeneration = -1L
+        invalidate()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (boundPageIndex >= 0 && renderer != null && !hasUsableBitmap()) {
+            post { if (isAttachedToWindow && boundPageIndex >= 0) requestRender() }
+        }
+    }
+
     override fun onDetachedFromWindow() {
         renderJob?.cancel()
+        cancelRecovery()
         cancelPendingTap()
         cancelActiveAnnotation()
+        renderGate.newBinding()
+        requestedToken = null
         releaseDisplayedBitmap()
+        renderState = PageRenderState.NOT_REQUESTED
         super.onDetachedFromWindow()
     }
 
     private companion object {
+        const val TAG = "RomanPdfRender"
         const val DOUBLE_TAP_DELAY_MS = 280L
         const val DOUBLE_TAP_TIMEOUT_MS = 360L
         const val DOUBLE_TAP_DISTANCE = 72f
+        const val RENDER_RECOVERY_DELAY_MS = 320L
     }
 }

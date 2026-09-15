@@ -5,4 +5,10 @@
     <color name="roman_paper">#FAF9F6</color>
     <color name="roman_muted">#667085</color>
     <color name="roman_icon_background">#0C4E93</color>
+    <color name="roman_surface">#FFFFFF</color>
+    <color name="roman_on_surface">#18202A</color>
+    <color name="roman_on_surface_variant">#52606D</color>
+    <color name="roman_outline">#B9C3D0</color>
+    <color name="roman_thumbnail_placeholder">#E8ECF2</color>
+    <color name="roman_search_highlight">#FFE08A</color>
 </resources>

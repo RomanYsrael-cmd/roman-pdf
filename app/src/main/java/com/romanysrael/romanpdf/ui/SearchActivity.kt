@@ -38,6 +38,7 @@ class SearchActivity : AppCompatActivity() {
 
         input = findViewById(R.id.search_input)
         empty = findViewById(R.id.search_empty)
+        val clear = findViewById<View>(R.id.search_clear)
         adapter = SearchResultAdapter(
             titleFor = { hit -> documents[hit.documentId.toLongOrNull()]?.title ?: "Document" },
             onClick = ::openResult
@@ -46,10 +47,21 @@ class SearchActivity : AppCompatActivity() {
             layoutManager = LinearLayoutManager(this@SearchActivity)
             adapter = this@SearchActivity.adapter
         }
-        input.doAfterTextChanged { scheduleSearch(it?.toString().orEmpty()) }
+        input.doAfterTextChanged {
+            val query = it?.toString().orEmpty()
+            clear.visibility = if (query.isBlank()) View.GONE else View.VISIBLE
+            adapter.setQuery(query)
+            scheduleSearch(query)
+        }
+        clear.setOnClickListener { input.setText("") }
         lifecycleScope.launch {
             documents = app.database.documentDao().getAll().associateBy { it.id }
             scheduleSearch(input.text.toString())
+        }
+        val initialQuery = intent.getStringExtra(EXTRA_QUERY).orEmpty()
+        if (initialQuery.isNotBlank()) {
+            input.setText(initialQuery)
+            input.setSelection(input.text.length)
         }
         input.requestFocus()
     }
@@ -71,5 +83,9 @@ class SearchActivity : AppCompatActivity() {
                 .putExtra(ReaderActivity.EXTRA_DOCUMENT_ID, hit.documentId.toLong())
                 .putExtra("page", page)
         )
+    }
+
+    companion object {
+        const val EXTRA_QUERY = "search_query"
     }
 }

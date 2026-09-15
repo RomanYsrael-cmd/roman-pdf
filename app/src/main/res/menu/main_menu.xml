@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/action_library_search"
+        android:icon="@drawable/ic_search"
+        android:title="@string/search"
+        app:actionViewClass="androidx.appcompat.widget.SearchView"
+        app:showAsAction="ifRoom|collapseActionView" />
+
+    <item
+        android:id="@+id/action_import_pdf"
+        android:icon="@drawable/ic_document"
+        android:title="@string/import_pdf"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_import_images"
+        android:icon="@drawable/ic_image"
+        android:title="@string/import_images"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_sort"
+        android:title="@string/sort"
+        app:showAsAction="never">
+        <menu>
+            <group android:checkableBehavior="single">
+                <item android:id="@+id/sort_name_asc" android:title="@string/sort_name_az" android:checkable="true" />
+                <item android:id="@+id/sort_name_desc" android:title="@string/sort_name_za" android:checkable="true" />
+                <item android:id="@+id/sort_recently_opened" android:title="@string/sort_recently_opened" android:checkable="true" />
+                <item android:id="@+id/sort_oldest_opened" android:title="@string/sort_oldest_opened" android:checkable="true" />
+                <item android:id="@+id/sort_recently_imported" android:title="@string/sort_recently_imported" android:checkable="true" />
+                <item android:id="@+id/sort_oldest_imported" android:title="@string/sort_oldest_imported" android:checkable="true" />
+                <item android:id="@+id/sort_page_count_asc" android:title="@string/sort_pages_low_high" android:checkable="true" />
+                <item android:id="@+id/sort_page_count_desc" android:title="@string/sort_pages_high_low" android:checkable="true" />
+            </group>
+        </menu>
+    </item>
+
+    <item
+        android:id="@+id/action_view"
+        android:title="@string/view"
+        app:showAsAction="never">
+        <menu>
+            <group android:checkableBehavior="single">
+                <item android:id="@+id/action_list_view" android:icon="@drawable/ic_list" android:title="@string/list_view" android:checkable="true" />
+                <item android:id="@+id/action_grid_view" android:icon="@drawable/ic_grid" android:title="@string/grid_view" android:checkable="true" />
+            </group>
+        </menu>
+    </item>
+</menu>

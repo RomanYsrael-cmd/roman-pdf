@@ -2,6 +2,10 @@ package com.romanysrael.romanpdf.ui
 
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.BackgroundColorSpan
+import android.text.style.ForegroundColorSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -18,11 +22,13 @@ import com.romanysrael.romanpdf.data.SearchHit
 import com.romanysrael.romanpdf.data.Stroke
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
 
 class LibraryAdapter(
     private val scope: CoroutineScope,
@@ -32,22 +38,37 @@ class LibraryAdapter(
 ) : ListAdapter<DocumentEntity, LibraryAdapter.Holder>(DIFF) {
     private val allItems = ArrayList<DocumentEntity>()
     private var gridMode = false
+    private var query = ""
+    private var sort = LibrarySort.RECENTLY_OPENED
 
     fun setAll(items: List<DocumentEntity>) {
         allItems.clear()
         allItems.addAll(items)
-        submitList(items)
+        refresh()
     }
 
     fun filter(query: String) {
-        val normalized = query.trim().lowercase()
-        submitList(if (normalized.isBlank()) allItems.toList() else allItems.filter { it.title.lowercase().contains(normalized) })
+        this.query = query.trim()
+        refresh()
+    }
+
+    fun setSort(sort: LibrarySort) {
+        if (this.sort == sort) return
+        this.sort = sort
+        refresh()
+    }
+
+    private fun refresh() {
+        val sorted = LibrarySortPolicy.sort(allItems, sort)
+        val normalized = query.lowercase(Locale.ROOT)
+        submitList(if (normalized.isBlank()) sorted else sorted.filter { it.title.lowercase(Locale.ROOT).contains(normalized) })
     }
 
     fun setGridMode(enabled: Boolean) {
         if (gridMode == enabled) return
         gridMode = enabled
-        notifyDataSetChanged()
+        // Every visible item changes view type; range invalidation forces the correct holder shape.
+        if (itemCount > 0) notifyItemRangeChanged(0, itemCount)
     }
 
     override fun getItemViewType(position: Int): Int = if (gridMode) VIEW_TYPE_GRID else VIEW_TYPE_LIST
@@ -63,8 +84,9 @@ class LibraryAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val document = getItem(position)
         holder.title.text = document.title
-        holder.meta.text = holder.itemView.context.getString(
-            R.string.document_meta,
+        holder.meta.text = holder.itemView.context.resources.getQuantityString(
+            R.plurals.document_meta,
+            document.pageCount,
             document.kind.lowercase().replaceFirstChar(Char::uppercase),
             document.pageCount,
             document.lastPage + 1,
@@ -134,6 +156,9 @@ class PdfPageAdapter(
     private val onErase: (Int, List<Long>) -> Unit
 ) : RecyclerView.Adapter<PdfPageAdapter.Holder>() {
     private val bitmapCache = PageBitmapCache(maxEntries = 3)
+    /** All display and prefetch work for one reader is queued through one dispatcher. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val renderDispatcher = Dispatchers.IO.limitedParallelism(1)
     private val toolByPage = HashMap<Int, String>()
     private var currentMode = ReaderMode.VIEW
     private var currentTool = AnnotationTools.NONE
@@ -151,7 +176,7 @@ class PdfPageAdapter(
     )
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.pageView.bind(position, renderer, scope, strokesForPage(position), pageCount)
+        holder.pageView.bind(position, renderer, scope, strokesForPage(position), pageCount, renderDispatcher)
         holder.pageView.setMode(currentMode)
         holder.pageView.setTool(toolByPage[position] ?: currentTool)
         holder.pageView.setInkWidth(currentInkWidth)
@@ -264,13 +289,20 @@ class SearchResultAdapter(
     private val titleFor: (SearchHit) -> String,
     private val onClick: (SearchHit) -> Unit
 ) : ListAdapter<SearchHit, SearchResultAdapter.Holder>(DIFF) {
+    private var query = ""
+
+    fun setQuery(query: String) {
+        this.query = query.trim()
+        if (itemCount > 0) notifyItemRangeChanged(0, itemCount)
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder = Holder(
         LayoutInflater.from(parent.context).inflate(R.layout.item_search_result, parent, false)
     )
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val result = getItem(position)
-        holder.title.text = titleFor(result)
+        holder.title.text = highlight(titleFor(result), holder.itemView.context)
         val page = result.pageIndex.toIntOrNull()
         holder.meta.text = if (page != null && page >= 0) {
             holder.itemView.context.getString(
@@ -281,8 +313,30 @@ class SearchResultAdapter(
         } else {
             holder.itemView.context.getString(R.string.search_result_note, result.sourceType.replace('_', ' '))
         }
-        holder.snippet.text = result.content.trim().replace(Regex("\\s+"), " ").take(260)
+        holder.snippet.text = highlight(result.content.trim().replace(Regex("\\s+"), " ").take(260), holder.itemView.context)
         holder.itemView.setOnClickListener { onClick(result) }
+    }
+
+    private fun highlight(text: String, context: android.content.Context): CharSequence {
+        if (query.isBlank() || text.isBlank()) return text
+        val highlighted = SpannableString(text)
+        query.split(Regex("\\s+")).filter(String::isNotBlank).distinct().forEach { term ->
+            Regex(Regex.escape(term), RegexOption.IGNORE_CASE).findAll(text).forEach { match ->
+                highlighted.setSpan(
+                    BackgroundColorSpan(context.getColor(R.color.roman_search_highlight)),
+                    match.range.first,
+                    match.range.last + 1,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                highlighted.setSpan(
+                    ForegroundColorSpan(context.getColor(R.color.roman_on_surface)),
+                    match.range.first,
+                    match.range.last + 1,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+        return highlighted
     }
 
     class Holder(view: View) : RecyclerView.ViewHolder(view) {

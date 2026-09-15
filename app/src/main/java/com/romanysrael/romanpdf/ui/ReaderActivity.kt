@@ -19,6 +19,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.content.res.AppCompatResources
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
@@ -634,7 +635,10 @@ class ReaderActivity : AppCompatActivity() {
         )
         menu.findItem(R.id.action_bookmark)?.apply {
             val isBookmarked = currentPage in bookmarkedPages
-            icon = getDrawable(if (isBookmarked) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark_outline)
+            icon = AppCompatResources.getDrawable(
+                this@ReaderActivity,
+                if (isBookmarked) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark_outline
+            )
             title = getString(if (isBookmarked) R.string.remove_bookmark else R.string.bookmark_page)
         }
         return super.onPrepareOptionsMenu(menu)

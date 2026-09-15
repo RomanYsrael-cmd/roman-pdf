@@ -2,7 +2,10 @@ package com.romanysrael.romanpdf
 
 import com.romanysrael.romanpdf.ui.AnnotationTools
 import com.romanysrael.romanpdf.ui.NavigationSource
+import com.romanysrael.romanpdf.ui.PageBitmapKey
 import com.romanysrael.romanpdf.ui.PageTransform
+import com.romanysrael.romanpdf.ui.PageRenderGate
+import com.romanysrael.romanpdf.ui.PageRenderState
 import com.romanysrael.romanpdf.ui.ReaderInteractionPolicy
 import com.romanysrael.romanpdf.ui.ReaderRenderPolicy
 import com.romanysrael.romanpdf.ui.ReaderMode
@@ -53,5 +56,28 @@ class ReaderInteractionTest {
         assertFalse(ReaderRenderPolicy.shouldRetainDisplayedBitmap(hasDisplayedBitmap = true, hasReplacement = true))
         assertEquals(listOf(0, 2), ReaderRenderPolicy.prefetchPages(pageIndex = 1, pageCount = 3))
         assertEquals(listOf(0), ReaderRenderPolicy.prefetchPages(pageIndex = 1, pageCount = 2))
+    }
+
+    @Test
+    fun renderGateRejectsStaleRequestsAndRebinds() {
+        val gate = PageRenderGate()
+        gate.newBinding()
+        val key = PageBitmapKey(pageIndex = 4, targetWidth = 600, targetHeight = 900)
+        val first = gate.begin(key)
+        val second = gate.begin(key)
+
+        assertFalse(gate.accepts(first, second))
+        assertTrue(gate.accepts(second, second))
+
+        gate.newBinding()
+        assertFalse(gate.accepts(second, gate.begin(key)))
+    }
+
+    @Test
+    fun renderStatesIncludeRecoverableFailure() {
+        assertEquals(
+            listOf(PageRenderState.NOT_REQUESTED, PageRenderState.RENDERING, PageRenderState.READY, PageRenderState.FAILED),
+            PageRenderState.entries.toList()
+        )
     }
 }

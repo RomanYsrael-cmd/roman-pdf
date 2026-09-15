@@ -6,7 +6,7 @@
     android:layout_marginTop="4dp"
     android:layout_marginEnd="12dp"
     android:layout_marginBottom="4dp"
-    android:background="@android:color/white"
+    android:background="@color/roman_surface"
     android:gravity="center_vertical"
     android:minHeight="84dp"
     android:orientation="horizontal"
@@ -16,7 +16,7 @@
         android:id="@+id/document_thumbnail"
         android:layout_width="64dp"
         android:layout_height="72dp"
-        android:background="#E8ECF2"
+        android:background="@color/roman_thumbnail_placeholder"
         android:contentDescription="@string/page"
         android:scaleType="centerInside" />
 
@@ -33,7 +33,7 @@
             android:layout_height="wrap_content"
             android:ellipsize="end"
             android:maxLines="1"
-            android:textColor="@color/roman_ink"
+            android:textColor="@color/roman_on_surface"
             android:textSize="17sp"
             android:textStyle="bold" />
 
@@ -42,7 +42,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:textColor="@color/roman_muted"
+            android:textColor="@color/roman_on_surface_variant"
             android:textSize="13sp" />
     </LinearLayout>
 </LinearLayout>

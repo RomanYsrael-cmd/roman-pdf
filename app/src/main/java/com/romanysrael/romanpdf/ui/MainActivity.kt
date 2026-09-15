@@ -1,16 +1,19 @@
 package com.romanysrael.romanpdf.ui
 
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.view.Menu
+import android.view.MenuItem
+import android.view.View
 import android.widget.EditText
-import android.widget.RadioGroup
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SearchView
 import androidx.appcompat.widget.Toolbar
-import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -29,10 +32,13 @@ import kotlinx.coroutines.withContext
 class MainActivity : AppCompatActivity() {
     private val app: RomanPdfApplication get() = application as RomanPdfApplication
     private val preferences by lazy { getSharedPreferences(PREFERENCES, MODE_PRIVATE) }
+    private lateinit var toolbar: Toolbar
+    private lateinit var toolbarBrand: View
     private lateinit var adapter: LibraryAdapter
-    private lateinit var emptyView: android.view.View
+    private lateinit var emptyView: View
     private lateinit var libraryList: RecyclerView
-    private lateinit var layoutToggle: RadioGroup
+    private var currentLayout = LibraryLayout.LIST
+    private var currentSort = LibrarySort.RECENTLY_OPENED
 
     private val pdfPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) importPdfs(uris)
@@ -46,8 +52,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        val toolbar = findViewById<Toolbar>(R.id.main_toolbar)
+        toolbar = findViewById(R.id.main_toolbar)
+        toolbarBrand = findViewById(R.id.main_toolbar_brand)
         setSupportActionBar(toolbar)
+        supportActionBar?.setDisplayShowTitleEnabled(false)
 
         emptyView = findViewById(R.id.library_empty_container)
         libraryList = findViewById(R.id.library_list)
@@ -57,48 +65,137 @@ class MainActivity : AppCompatActivity() {
             onClick = { openDocument(it) },
             onLongClick = { showDocumentActions(it) }
         )
+        currentSort = LibrarySort.fromStored(preferences.getString(LibrarySortPolicy.PREFERENCE_KEY, null))
+        currentLayout = LibraryLayout.fromStored(preferences.getString(LibraryLayoutPolicy.PREFERENCE_KEY, null))
+        adapter.setSort(currentSort)
         libraryList.adapter = adapter
-
-        findViewById<android.widget.Button>(R.id.import_pdf_button).setOnClickListener {
-            pdfPicker.launch(arrayOf("application/pdf"))
-        }
-        findViewById<android.widget.Button>(R.id.import_image_button).setOnClickListener {
-            imagePicker.launch(arrayOf("image/jpeg", "image/png", "image/webp"))
-        }
-        findViewById<android.widget.ImageButton>(R.id.global_search_button).setOnClickListener {
-            startActivity(Intent(this, SearchActivity::class.java))
-        }
-        findViewById<EditText>(R.id.library_filter).doAfterTextChanged {
-            adapter.filter(it?.toString().orEmpty())
-        }
-
-        layoutToggle = findViewById(R.id.library_layout_toggle)
-        layoutToggle.setOnCheckedChangeListener { _, checkedId ->
-            val selected = if (checkedId == R.id.grid_view_button) LibraryLayout.GRID else LibraryLayout.LIST
-            applyLibraryLayout(selected, persist = true)
-        }
-        val storedLayout = LibraryLayout.fromStored(preferences.getString(LibraryLayoutPolicy.PREFERENCE_KEY, null))
-        layoutToggle.check(if (storedLayout == LibraryLayout.GRID) R.id.grid_view_button else R.id.list_view_button)
-        applyLibraryLayout(storedLayout, persist = false)
+        applyLibraryLayout(currentLayout, persist = false)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 app.database.documentDao().observeAll().collect { documents ->
                     adapter.setAll(documents)
-                    emptyView.visibility = if (documents.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+                    emptyView.visibility = if (documents.isEmpty()) View.VISIBLE else View.GONE
                 }
             }
         }
         handleIncomingIntent(intent)
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleIncomingIntent(intent)
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.main_menu, menu)
+        val searchItem = menu.findItem(R.id.action_library_search)
+        val searchView = searchItem.actionView as SearchView
+        searchView.queryHint = getString(R.string.search_documents)
+        searchView.maxWidth = Int.MAX_VALUE
+        searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
+            override fun onQueryTextChange(newText: String): Boolean {
+                adapter.filter(newText)
+                return true
+            }
+
+            override fun onQueryTextSubmit(query: String): Boolean {
+                val normalized = query.trim()
+                if (normalized.isNotEmpty()) {
+                    startActivity(Intent(this@MainActivity, SearchActivity::class.java).apply {
+                        putExtra(SearchActivity.EXTRA_QUERY, normalized)
+                    })
+                    searchItem.collapseActionView()
+                }
+                return true
+            }
+        })
+        searchView.setOnCloseListener {
+            adapter.filter("")
+            false
+        }
+        searchItem.setOnActionExpandListener(object : MenuItem.OnActionExpandListener {
+            override fun onMenuItemActionExpand(item: MenuItem): Boolean {
+                toolbarBrand.visibility = View.GONE
+                styleToolbarSearch(searchView)
+                return true
+            }
+
+            override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
+                toolbarBrand.visibility = View.VISIBLE
+                adapter.filter("")
+                return true
+            }
+        })
+        styleToolbarSearch(searchView)
+        updateMenuChecks(menu)
+        return true
+    }
+
+    private fun styleToolbarSearch(searchView: SearchView) {
+        val query = searchView.findViewById<EditText>(androidx.appcompat.R.id.search_src_text)
+        query?.setTextColor(Color.WHITE)
+        query?.setHintTextColor(Color.argb(190, 255, 255, 255))
+        searchView.findViewById<View>(androidx.appcompat.R.id.search_close_btn)?.contentDescription = getString(R.string.clear_search)
+    }
+
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+        updateMenuChecks(menu)
+        return super.onPrepareOptionsMenu(menu)
+    }
+
+    private fun updateMenuChecks(menu: Menu) {
+        menu.findItem(R.id.action_list_view)?.isChecked = currentLayout == LibraryLayout.LIST
+        menu.findItem(R.id.action_grid_view)?.isChecked = currentLayout == LibraryLayout.GRID
+        val sortIds = mapOf(
+            LibrarySort.NAME_ASC to R.id.sort_name_asc,
+            LibrarySort.NAME_DESC to R.id.sort_name_desc,
+            LibrarySort.RECENTLY_OPENED to R.id.sort_recently_opened,
+            LibrarySort.OLDEST_OPENED to R.id.sort_oldest_opened,
+            LibrarySort.RECENTLY_IMPORTED to R.id.sort_recently_imported,
+            LibrarySort.OLDEST_IMPORTED to R.id.sort_oldest_imported,
+            LibrarySort.PAGE_COUNT_ASC to R.id.sort_page_count_asc,
+            LibrarySort.PAGE_COUNT_DESC to R.id.sort_page_count_desc
+        )
+        sortIds.values.forEach { id -> menu.findItem(id)?.isChecked = false }
+        sortIds[currentSort]?.let { menu.findItem(it)?.isChecked = true }
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+        R.id.action_import_pdf -> {
+            pdfPicker.launch(arrayOf("application/pdf"))
+            true
+        }
+        R.id.action_import_images -> {
+            imagePicker.launch(arrayOf("image/jpeg", "image/png", "image/webp"))
+            true
+        }
+        R.id.action_list_view -> {
+            applyLibraryLayout(LibraryLayout.LIST, persist = true)
+            invalidateOptionsMenu()
+            true
+        }
+        R.id.action_grid_view -> {
+            applyLibraryLayout(LibraryLayout.GRID, persist = true)
+            invalidateOptionsMenu()
+            true
+        }
+        R.id.sort_name_asc -> selectSort(LibrarySort.NAME_ASC)
+        R.id.sort_name_desc -> selectSort(LibrarySort.NAME_DESC)
+        R.id.sort_recently_opened -> selectSort(LibrarySort.RECENTLY_OPENED)
+        R.id.sort_oldest_opened -> selectSort(LibrarySort.OLDEST_OPENED)
+        R.id.sort_recently_imported -> selectSort(LibrarySort.RECENTLY_IMPORTED)
+        R.id.sort_oldest_imported -> selectSort(LibrarySort.OLDEST_IMPORTED)
+        R.id.sort_page_count_asc -> selectSort(LibrarySort.PAGE_COUNT_ASC)
+        R.id.sort_page_count_desc -> selectSort(LibrarySort.PAGE_COUNT_DESC)
+        else -> super.onOptionsItemSelected(item)
+    }
+
+    private fun selectSort(sort: LibrarySort): Boolean {
+        currentSort = sort
+        preferences.edit().putString(LibrarySortPolicy.PREFERENCE_KEY, sort.name).apply()
+        adapter.setSort(sort)
+        invalidateOptionsMenu()
+        return true
     }
 
     private fun applyLibraryLayout(layout: LibraryLayout, persist: Boolean) {
+        currentLayout = layout
         if (persist) preferences.edit().putString(LibraryLayoutPolicy.PREFERENCE_KEY, layout.name).apply()
         adapter.setGridMode(layout == LibraryLayout.GRID)
         if (layout == LibraryLayout.GRID) {
@@ -107,8 +204,8 @@ class MainActivity : AppCompatActivity() {
             libraryList.layoutManager = GridLayoutManager(this, spanCount)
             libraryList.post {
                 val measuredWidth = libraryList.width.takeIf { it > 0 } ?: width
-                val current = libraryList.layoutManager as? GridLayoutManager
-                current?.spanCount = LibraryLayoutPolicy.spanCount(measuredWidth, resources.displayMetrics.density)
+                (libraryList.layoutManager as? GridLayoutManager)?.spanCount =
+                    LibraryLayoutPolicy.spanCount(measuredWidth, resources.displayMetrics.density)
             }
         } else {
             libraryList.layoutManager = LinearLayoutManager(this)
@@ -139,11 +236,7 @@ class MainActivity : AppCompatActivity() {
                     if (selected.size == 1) app.repository.indexDocument(id)
                 }
             }.onSuccess {
-                Toast.makeText(
-                    this@MainActivity,
-                    getString(R.string.added_pdf_count, selected.size),
-                    Toast.LENGTH_LONG
-                ).show()
+                Toast.makeText(this@MainActivity, getString(R.string.added_pdf_count, selected.size), Toast.LENGTH_LONG).show()
             }.onFailure {
                 Toast.makeText(this@MainActivity, it.message ?: getString(R.string.import_failed), Toast.LENGTH_LONG).show()
             }
@@ -158,11 +251,11 @@ class MainActivity : AppCompatActivity() {
                 selectAll()
                 setSingleLine(true)
                 hint = getString(R.string.image_document_title_hint)
-                importantForAutofill = android.view.View.IMPORTANT_FOR_AUTOFILL_NO
+                importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
             }
             AlertDialog.Builder(this@MainActivity)
                 .setTitle(R.string.image_document_title)
-                .setMessage(getString(R.string.image_document_pages, uris.size))
+                .setMessage(resources.getQuantityString(R.plurals.image_document_pages, uris.size, uris.size))
                 .setView(input)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(android.R.string.ok) { _, _ -> importImageDocument(uris, input.text.toString()) }
@@ -201,10 +294,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openDocument(document: DocumentEntity) {
-        startActivity(
-            Intent(this, ReaderActivity::class.java)
-                .putExtra(ReaderActivity.EXTRA_DOCUMENT_ID, document.id)
-        )
+        startActivity(Intent(this, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_DOCUMENT_ID, document.id))
     }
 
     private fun showDocumentActions(document: DocumentEntity) {

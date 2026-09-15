@@ -1,14 +1,14 @@
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">ROMAN PDF</string>
     <string name="go_to_page">Go to page</string>
-    <string name="document_meta">%1$s · %2$d pages · page %3$d · %4$s</string>
     <string name="page_number">%1$d</string>
     <string name="search_result_page">%1$s · page %2$d</string>
     <string name="search_result_note">%1$s · document note</string>
     <string name="import_pdf">Import PDF</string>
     <string name="import_images">Import images</string>
     <string name="search">Search</string>
-    <string name="search_library">Filter library</string>
+    <string name="search_documents">Search documents…</string>
+    <string name="clear_search">Clear search</string>
     <string name="empty_library">Your library is empty\nImport a PDF or image to begin.</string>
     <string name="page_overview">Page overview</string>
     <string name="bookmark_page">Bookmark page</string>
@@ -29,6 +29,16 @@
     <string name="no_search_results">No matches yet</string>
     <string name="list_view">List</string>
     <string name="grid_view">Grid</string>
+    <string name="sort">Sort</string>
+    <string name="view">View</string>
+    <string name="sort_name_az">Name A–Z</string>
+    <string name="sort_name_za">Name Z–A</string>
+    <string name="sort_recently_opened">Recently opened</string>
+    <string name="sort_oldest_opened">Oldest opened</string>
+    <string name="sort_recently_imported">Recently imported</string>
+    <string name="sort_oldest_imported">Oldest imported</string>
+    <string name="sort_pages_low_high">Page count: low to high</string>
+    <string name="sort_pages_high_low">Page count: high to low</string>
     <string name="importing">Importing…</string>
     <string name="importing_pdf_count">Importing %1$d PDFs…</string>
     <string name="added_to_library">Added to library</string>
@@ -37,7 +47,6 @@
     <string name="save_failed">Unable to save the change</string>
     <string name="image_document_title">Image document</string>
     <string name="image_document_title_hint">Document title</string>
-    <string name="image_document_pages">%1$d selected images will become one document.</string>
     <string name="importing_images">Importing images…</string>
     <string name="image_document_added">Image document added</string>
     <string name="opening_pdf">Opening PDF…</string>
@@ -58,7 +67,7 @@
     <string name="annotation_color">Annotation color: %1$s</string>
     <string name="pen_width">Pen width %1$d</string>
     <string name="note_hint">Write a quick note</string>
-    <string name="page_note">Page %1$d note</string>
+    <string name="page_note" tools:ignore="PluralsCandidate">Page %1$d note</string>
     <string name="note_saved">Note saved</string>
     <string name="go">Go</string>
     <string name="page_range">Enter a page from 1 to %1$d</string>
@@ -79,4 +88,6 @@
     <string name="model_download_unavailable">Model download unavailable</string>
     <string name="no_handwriting">No handwriting recognized</string>
     <string name="handwriting_indexed">Handwriting indexed</string>
+    <string name="rendering_page">Preparing page %1$d…</string>
+    <string name="render_retrying">Page render failed — retrying…</string>
 </resources>

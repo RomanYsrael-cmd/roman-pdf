@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_margin="6dp"
-    android:background="@android:color/white"
+    android:background="@color/roman_surface"
     android:orientation="vertical"
     android:padding="8dp">
 
@@ -11,7 +11,7 @@
         android:id="@+id/document_thumbnail"
         android:layout_width="match_parent"
         android:layout_height="170dp"
-        android:background="#E8ECF2"
+        android:background="@color/roman_thumbnail_placeholder"
         android:contentDescription="@string/page"
         android:scaleType="centerInside" />
 
@@ -22,7 +22,7 @@
         android:layout_marginTop="8dp"
         android:ellipsize="end"
         android:maxLines="2"
-        android:textColor="@color/roman_ink"
+        android:textColor="@color/roman_on_surface"
         android:textSize="16sp"
         android:textStyle="bold" />
 
@@ -33,6 +33,6 @@
         android:layout_marginTop="4dp"
         android:ellipsize="end"
         android:maxLines="2"
-        android:textColor="@color/roman_muted"
+        android:textColor="@color/roman_on_surface_variant"
         android:textSize="12sp" />
 </LinearLayout>

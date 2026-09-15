@@ -3,92 +3,43 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="@color/roman_paper">
+    android:orientation="vertical">
 
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/main_toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
         android:background="@color/roman_blue"
-        app:title="ROMAN PDF"
-        app:titleTextColor="@android:color/white" />
+        android:elevation="2dp"
+        android:minHeight="48dp"
+        app:contentInsetStartWithNavigation="0dp">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingStart="12dp"
-        android:paddingTop="10dp"
-        android:paddingEnd="12dp"
-        android:paddingBottom="4dp">
-
-        <Button
-            android:id="@+id/import_pdf_button"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/import_pdf"
-            android:textAllCaps="false" />
-
-        <Button
-            android:id="@+id/import_image_button"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:text="@string/import_images"
-            android:textAllCaps="false" />
-
-        <ImageButton
-            android:id="@+id/global_search_button"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="4dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/search"
-            android:src="@drawable/ic_search"
-            app:tint="@color/roman_ink" />
-    </LinearLayout>
-
-    <EditText
-        android:id="@+id/library_filter"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
-        android:layout_marginEnd="12dp"
-        android:hint="@string/search_library"
-        android:importantForAutofill="no"
-        android:imeOptions="actionSearch"
-        android:inputType="text"
-        android:maxLines="1"
-        android:padding="12dp" />
-
-    <RadioGroup
-        android:id="@+id/library_layout_toggle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
-        android:layout_marginTop="2dp"
-        android:orientation="horizontal">
-
-        <RadioButton
-            android:id="@+id/list_view_button"
+        <LinearLayout
+            android:id="@+id/main_toolbar_brand"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:checked="true"
-            android:text="@string/list_view"
-            android:textColor="@color/roman_ink"
-            android:textAllCaps="false" />
+            android:layout_height="match_parent"
+            android:layout_gravity="start"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp">
 
-        <RadioButton
-            android:id="@+id/grid_view_button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/grid_view"
-            android:textColor="@color/roman_ink"
-            android:textAllCaps="false" />
-    </RadioGroup>
+            <ImageView
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:contentDescription="@string/app_name"
+                android:scaleType="centerInside"
+                android:src="@drawable/roman_pdf_icon" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="@string/app_name"
+                android:textColor="@android:color/white"
+                android:textSize="19sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </androidx.appcompat.widget.Toolbar>
 
     <FrameLayout
         android:layout_width="match_parent"
@@ -101,7 +52,8 @@
             android:layout_height="match_parent"
             android:clipToPadding="false"
             android:paddingTop="8dp"
-            android:paddingBottom="16dp" />
+            android:paddingBottom="16dp"
+            android:scrollbars="vertical" />
 
         <LinearLayout
             android:id="@+id/library_empty_container"

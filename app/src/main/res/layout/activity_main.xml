@@ -103,15 +103,31 @@
             android:paddingTop="8dp"
             android:paddingBottom="16dp" />
 
-        <TextView
-            android:id="@+id/library_empty"
+        <LinearLayout
+            android:id="@+id/library_empty_container"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:gravity="center"
-            android:padding="32dp"
-            android:text="@string/empty_library"
-            android:textAlignment="center"
-            android:textColor="@color/roman_muted"
-            android:textSize="18sp" />
+            android:orientation="vertical"
+            android:padding="32dp">
+
+            <ImageView
+                android:layout_width="128dp"
+                android:layout_height="128dp"
+                android:contentDescription="@string/app_name"
+                android:scaleType="fitCenter"
+                android:src="@drawable/roman_pdf_icon" />
+
+            <TextView
+                android:id="@+id/library_empty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center"
+                android:text="@string/empty_library"
+                android:textAlignment="center"
+                android:textColor="@color/roman_muted"
+                android:textSize="18sp" />
+        </LinearLayout>
     </FrameLayout>
 </LinearLayout>

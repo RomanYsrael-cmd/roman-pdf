@@ -1,0 +1,24 @@
+<resources>
+    <string name="app_name">ROMAN PDF</string>
+    <string name="go_to_page">Go to page</string>
+    <string name="document_meta">%1$s · %2$d pages · page %3$d · %4$s</string>
+    <string name="page_number">%1$d</string>
+    <string name="search_result_page">%1$s · page %2$d</string>
+    <string name="search_result_note">%1$s · document note</string>
+    <string name="import_pdf">Import PDF</string>
+    <string name="import_image">Import image</string>
+    <string name="search">Search</string>
+    <string name="search_library">Filter library</string>
+    <string name="empty_library">Your library is empty\nImport a PDF or image to begin.</string>
+    <string name="page_overview">Page overview</string>
+    <string name="pen">Pen</string>
+    <string name="highlighter">Highlighter</string>
+    <string name="eraser">Eraser</string>
+    <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
+    <string name="add_note">Add note</string>
+    <string name="export">Export</string>
+    <string name="recognize_handwriting">Recognize handwriting</string>
+    <string name="page">Page</string>
+    <string name="no_search_results">No matches yet</string>
+</resources>

@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.RomanPdf" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/roman_blue</item>
+        <item name="colorAccent">@color/roman_blue</item>
+        <item name="android:navigationBarColor">@color/roman_ink</item>
+        <item name="android:statusBarColor">@color/roman_blue_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>

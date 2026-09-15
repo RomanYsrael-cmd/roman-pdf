@@ -2,18 +2,23 @@
 
 ## Document storage
 
-Import uses the Storage Access Framework and requests a persistable read grant when the provider supports it. `DocumentEntity` stores the URI, title, MIME/kind, page count, last page, and index state. The original PDF/image remains outside SQLite and is not duplicated. This keeps large files out of the database and avoids unnecessary storage growth.
+Import uses the Storage Access Framework and requests a persistable read grant when the provider supports it. `DocumentEntity` stores the URI, title, MIME/kind, page count, last page, index state, and a stable source key. The Room primary key remains the document identity; the source key and URI are only import de-duplication aids, so same-named files cannot mix annotations, notes, search rows, or thumbnails.
+
+An image document stores its ordered pages as `PageSource(type = IMAGE_PAGE, uri)` records encoded by `PageSourceCodec`. The encoded form is deliberately small and URL-safe, so commas, semicolons, spaces, and provider-specific query parameters do not change page boundaries. Existing V1 single-image rows have an empty page-source column and transparently fall back to their original URI. PDF documents continue to use one PDF source rendered by page index.
+
+If a content URI cannot be persisted, or an external `file://` PDF arrives through `ACTION_VIEW`, the repository streams it into `files/source_cache/` before it is opened. This gives the reader, indexing, and future process restarts a durable local source without assuming a filesystem path for normal SAF content URIs.
 
 App-private files are limited to:
 
 - `files/thumbnails/` — small WebP first-page or overview thumbnails.
 - `files/exports/` — one-page images and exported PDFs ready for sharing.
+- `files/source_cache/` — materialized external sources whose URI grant cannot be made durable.
 
 The database contains document metadata, compact vector strokes, typed notes, and the FTS4 search table. Stroke points are normalized to the page and encoded as a compact `x,y,pressure,time;…` string, avoiding one Room row per touch point.
 
 ## PDF rendering pipeline
 
-`DocumentRenderEngine` opens one `ParcelFileDescriptor` and one `PdfRenderer` per reader. All renderer access is serialized because `PdfRenderer` is not a multi-reader object. A page view requests only its own display-sized bitmap from a coroutine on `Dispatchers.IO`. The reader uses a horizontal `RecyclerView` with `PagerSnapHelper`, so Android creates and binds only the visible page plus a small RecyclerView prefetch window.
+`DocumentRenderEngine` opens one `ParcelFileDescriptor` and one `PdfRenderer` per PDF reader. All renderer access is serialized because `PdfRenderer` is not a multi-reader object. A page view requests only its own display-sized bitmap from a coroutine on `Dispatchers.IO`. For image documents, the same page view asks `BitmapFactory` for bounds, chooses an `inSampleSize`, and decodes only the requested page. The reader uses a horizontal `RecyclerView` with `PagerSnapHelper`, so Android creates and binds only the visible page plus a small RecyclerView prefetch window.
 
 Pages are closed immediately after rendering. Recycled page views cancel obsolete render jobs and release their bitmap. Image documents use sampled `BitmapFactory` decoding based on the view target size. A hard working bitmap cap prevents an unusually large page from creating an uncontrolled allocation.
 
@@ -21,7 +26,17 @@ Pages are closed immediately after rendering. Recycled page views cancel obsolet
 
 Every stored point is normalized to the fitted page rectangle: `(0,0)` is the page's top-left and `(1,1)` is its bottom-right. The canvas maps those coordinates into the current render rectangle, so rotation, display size, export resolution, and zoom do not change stroke placement. Pressure and event time are retained for future pressure-aware tools and recognition.
 
-Pen/highlighter input stays in memory during a gesture and is inserted once on stroke completion. The compact toolbar cycles three pen widths with a pen long-press and three ink colors with a highlighter long-press. Erasing is stroke based: the eraser tests a small normalized radius against stored points and emits the IDs hit. Undo/redo records either an added stroke or the complete set removed by one eraser gesture, then updates Room asynchronously.
+Pen/highlighter input stays in memory during a gesture and is inserted once on stroke completion. The compact toolbar cycles three pen widths with a pen long-press and opens a nine-color palette for pen/highlighter input. Pen and highlighter colors are remembered independently, and each stroke stores its ARGB color so existing annotations do not change when a new color is selected. Erasing is stroke based: the eraser tests a small normalized radius against stored points and emits the IDs hit. Undo/redo records either an added stroke or the complete set removed by one eraser gesture, then updates Room asynchronously.
+
+Reader input is explicitly arbitrated by `ReaderMode`. View mode gives one finger to zoomed panning and lets the parent pager receive a horizontal swipe at fit scale. Edit mode gives one finger to pen, highlighter, or eraser input even when zoomed. A second pointer cancels an active annotation cleanly and owns centroid pan plus scale; after multi-touch ends, the next single pointer starts a fresh interaction. Edit-mode double tap resets the page transform; View-mode double tap toggles a useful zoom. Tap-origin page changes use immediate RecyclerView positioning, while swipe-origin changes retain the pager snap animation.
+
+The reader can apply an immersive WindowInsets-based fullscreen state. App chrome is hidden while the document remains full-bleed, system bars can be recovered by a standard edge gesture, and a center tap restores app chrome without permanently forcing the bars visible. The preference is scoped to reader use and is restored on recreation.
+
+## Library layouts and external open
+
+The library has one data source and one adapter for both List and adaptive Grid modes. Grid span count is computed from the measured width and density, and the choice is stored in `library_preferences`. Thumbnails are still requested only when a bound tile needs one; switching layouts does not create an eager thumbnail batch. Long-press actions resolve the current adapter position at event time, so a last-opened resort cannot dispatch an old document.
+
+`MainActivity` declares `application/pdf` for `ACTION_VIEW` and handles both cold starts and `singleTop` new intents. It determines the display name from provider metadata or the URI, allocates a duplicate-safe title, creates library metadata, opens `ReaderActivity`, and launches PDF text indexing separately. This keeps external opening responsive and lets the same reader/annotation/export path handle files opened from Downloads or another file manager.
 
 ## Search and indexing
 
@@ -35,7 +50,7 @@ ML Kit Digital Ink is an optional adapter. It is not initialized at application 
 
 ## Export pipeline
 
-Page image export renders one page, draws the normalized strokes onto that bitmap, writes PNG/JPEG, and releases the bitmap. Annotated PDF export loops page by page: render, start an `android.graphics.pdf.PdfDocument` page, draw the background and strokes, finish the page, recycle the bitmap, then continue. No full-document bitmap list is built. `FileProvider` grants read access to the app-private export and the Android Sharesheet handles external sharing.
+Page image export renders one page, draws the normalized strokes onto that bitmap, writes PNG/JPEG, and releases the bitmap. Annotated PDF export loops page by page: render, start an `android.graphics.pdf.PdfDocument` page, draw the background and strokes, finish the page, recycle the bitmap, then continue. No full-document bitmap list is built. Image-document export uses the same loop and therefore preserves the selected page order. Output names are sanitized and receive a numeric suffix when a prior export exists. `FileProvider` grants read access to the app-private export and the Android Sharesheet handles external sharing.
 
 ## Caching and lifecycle
 

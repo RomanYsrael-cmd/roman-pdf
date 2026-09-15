@@ -4,15 +4,18 @@ ROMAN PDF is an offline-first Android PDF reader with lightweight annotation, no
 
 ## Features
 
-- Library of imported PDFs and images with remembered last page and lazy first-page thumbnails.
+- Library of imported PDFs and image documents with remembered last page and lazy first-page thumbnails.
 - PDF pages rendered on demand with Android `PdfRenderer`; horizontal paging, left/right page taps, page jump, page overview, pinch zoom, and double-tap zoom.
-- Vector pen and highlighter strokes with normalized coordinates, stroke eraser, undo/redo, pen-width cycling, a small ink-color palette, and persistence across restarts.
+- Explicit View/Edit reader modes: one-finger navigation in View, one-finger pen/highlighter/eraser input in Edit, and two-finger pan/pinch in either mode.
+- Vector pen and highlighter strokes with normalized coordinates, stroke eraser, undo/redo, pen-width cycling, independent pen/highlighter color palettes, and persistence across restarts.
 - Typed notes attached to the current page.
 - Local SQLite FTS search across extracted PDF text, typed notes, and recognized handwriting.
 - Incremental PDF text indexing through PDFBox-Android without using PDFBox for display.
 - Optional English ML Kit Digital Ink recognition, started explicitly after a model is available.
-- Page PNG/JPEG export, sequential annotated PDF export, and Android Sharesheet sharing through `FileProvider`.
-- JPEG, PNG, and WebP image import as single-page documents.
+- Page PNG/JPEG export, sequential annotated PDF export, and Android Sharesheet sharing through `FileProvider`, with collision-safe output names.
+- JPEG, PNG, and WebP image import as single-page documents or one ordered multi-image document.
+- Adaptive List/Grid library layouts, remembered per device, and an immersive reader mode with recoverable system bars.
+- PDF `ACTION_VIEW` handling so ROMAN PDF appears as an Android PDF “Open with” target.
 
 ## Design goals
 
@@ -27,18 +30,24 @@ Primary validation device: Lenovo TB-X306X (marketed as Lenovo Tab M10 HD), arm6
 - Kotlin and classic Android Views/XML; no Compose.
 - `MainActivity` owns the library and Storage Access Framework import flows.
 - `ReaderActivity` owns a horizontal `RecyclerView`/`PagerSnapHelper` page reader and annotation interaction.
+- `DocumentEntity` uses stable Room IDs plus a source key for import identity. Multi-image documents store an ordered, Base64-url encoded list of `IMAGE_PAGE` source URIs; legacy single-image rows fall back to their original URI.
+- External PDF `ACTION_VIEW` inputs are persisted when possible and copied to app-private storage when a durable content/file URI is not available. Opening starts the reader before background indexing.
 - `DocumentRenderEngine` serializes a small `PdfRenderer` working set and sampled image decoding.
 - Room stores document metadata, notes, compact serialized vector strokes, and an FTS4 search table.
 - PDFBox-Android is initialized only when a PDF needs text indexing.
 - ML Kit Digital Ink is initialized only from the explicit recognition action.
-- Large source binaries remain at their SAF URI; thumbnails and exports are small app-private files.
+- Large source binaries remain at their SAF URI when access can be persisted. Non-persistable external sources are materialized once in `files/source_cache/`; thumbnails and exports are small app-private files.
 
 ## Build
 
 From the repository root on Windows:
 
 ```text
+gradlew.bat testDebugUnitTest
+gradlew.bat connectedDebugAndroidTest
+gradlew.bat lintDebug
 gradlew.bat assembleDebug
+gradlew.bat assembleRelease
 ```
 
 The debug APK is created at `app/build/outputs/apk/debug/app-debug.apk`. Release signing is intentionally not configured; a release build uses R8/resource shrinking when signing is supplied by the environment.
@@ -82,8 +91,8 @@ gradlew.bat connectedDebugAndroidTest
 - Scanned-PDF OCR is not included in this version.
 - Handwriting recognition requires the optional English ML Kit model and is explicit/on-demand rather than continuous.
 - The V1 eraser removes complete vector strokes rather than editing a stroke segment.
-- An imported SAF URI must remain readable to Android; if a provider revokes access, the library reports an open error rather than duplicating a potentially massive file.
-- Image imports are single-page documents.
+- A persisted SAF URI must remain readable to Android. External non-persistable URIs are copied into app-private storage at import/open time; very large files may therefore take longer to materialize.
+- The V1 image-document model preserves picker order but does not yet expose page reordering after import.
 
 ## Privacy
 
@@ -91,4 +100,4 @@ PDFs, images, notes, and strokes stay on the device. There is no account, ads, t
 
 ## Project status
 
-The debug build, device installation, and core smoke flows have been validated on the target tablet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for implementation and measurement notes.
+The debug build, device installation, image-document flow, immersive reader flow, PDF `ACTION_VIEW` flow, and core annotation smoke flows have been validated on the target tablet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for implementation and measurement notes.

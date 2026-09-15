@@ -22,6 +22,9 @@ interface DocumentDao {
     @Query("SELECT * FROM documents WHERE uri = :uri LIMIT 1")
     suspend fun getByUri(uri: String): DocumentEntity?
 
+    @Query("SELECT * FROM documents WHERE source_key = :sourceKey LIMIT 1")
+    suspend fun getBySourceKey(sourceKey: String): DocumentEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(document: DocumentEntity): Long
 

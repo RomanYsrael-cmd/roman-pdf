@@ -5,6 +5,8 @@ import androidx.room.Entity
 import androidx.room.Fts4
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 object DocumentKinds {
     const val PDF = "PDF"
@@ -19,7 +21,7 @@ object SearchSources {
 
 @Entity(
     tableName = "documents",
-    indices = [Index(value = ["uri"], unique = true)]
+    indices = [Index(value = ["uri"], unique = true), Index(value = ["source_key"])]
 )
 data class DocumentEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -32,8 +34,47 @@ data class DocumentEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val lastOpenedAt: Long = System.currentTimeMillis(),
     val textIndexComplete: Boolean = false,
-    val textIndexFailed: Boolean = false
+    val textIndexFailed: Boolean = false,
+    @ColumnInfo(name = "page_sources", defaultValue = "''") val pageSources: String = "",
+    @ColumnInfo(name = "source_key", defaultValue = "''") val sourceKey: String = ""
 )
+
+enum class PageSourceType {
+    PDF_PAGE,
+    IMAGE_PAGE
+}
+
+data class PageSource(
+    val type: PageSourceType,
+    val uri: String
+)
+
+/** Base64-url encoding keeps arbitrary content:// URIs safely ordered without a heavy serializer. */
+object PageSourceCodec {
+    fun encode(uris: List<String>): String = uris
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .map { Base64.getUrlEncoder().withoutPadding().encodeToString(it.toByteArray(StandardCharsets.UTF_8)) }
+        .joinToString(".")
+
+    fun decode(encoded: String): List<String> = encoded
+        .split('.')
+        .asSequence()
+        .filter(String::isNotBlank)
+        .mapNotNull { token ->
+            runCatching { String(Base64.getUrlDecoder().decode(token), StandardCharsets.UTF_8) }
+                .getOrNull()
+                ?.takeIf(String::isNotBlank)
+        }
+        .toList()
+}
+
+fun DocumentEntity.pageSourceList(): List<PageSource> = when (kind) {
+    DocumentKinds.IMAGE -> PageSourceCodec.decode(pageSources)
+        .ifEmpty { listOf(uri) }
+        .map { PageSource(PageSourceType.IMAGE_PAGE, it) }
+    else -> emptyList()
+}
 
 @Entity(
     tableName = "strokes",

@@ -10,7 +10,9 @@ import android.os.ParcelFileDescriptor
 import android.util.Size
 import com.romanysrael.romanpdf.data.DocumentEntity
 import com.romanysrael.romanpdf.data.DocumentKinds
+import com.romanysrael.romanpdf.data.pageSourceList
 import java.io.Closeable
+import java.io.File
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -21,15 +23,16 @@ class DocumentRenderEngine(
     private val document: DocumentEntity
 ) : Closeable {
     private val lock = Any()
+    private val imageUris = document.pageSourceList().map { Uri.parse(it.uri) }.ifEmpty { listOf(Uri.parse(document.uri)) }
     private var descriptor: ParcelFileDescriptor? = null
     private var pdfRenderer: PdfRenderer? = null
 
     fun pageCount(): Int = synchronized(lock) {
-        if (document.kind == DocumentKinds.IMAGE) 1 else ensurePdfRenderer().pageCount
+        if (document.kind == DocumentKinds.IMAGE) imageUris.size.coerceAtLeast(1) else ensurePdfRenderer().pageCount
     }
 
     fun pageSize(pageIndex: Int): Size = synchronized(lock) {
-        if (document.kind == DocumentKinds.IMAGE) imageBounds()
+        if (document.kind == DocumentKinds.IMAGE) imageBounds(pageIndex)
         else {
             val page = ensurePdfRenderer().openPage(pageIndex)
             try {
@@ -42,7 +45,7 @@ class DocumentRenderEngine(
 
     /** Renders only the requested page at a display-sized working resolution. */
     fun renderPage(pageIndex: Int, targetWidth: Int, targetHeight: Int, forPrint: Boolean = false): Bitmap? = synchronized(lock) {
-        if (document.kind == DocumentKinds.IMAGE) return@synchronized decodeImage(targetWidth, targetHeight)
+        if (document.kind == DocumentKinds.IMAGE) return@synchronized decodeImage(pageIndex, targetWidth, targetHeight)
 
         val page = ensurePdfRenderer().openPage(pageIndex)
         try {
@@ -73,22 +76,22 @@ class DocumentRenderEngine(
 
     private fun ensurePdfRenderer(): PdfRenderer {
         pdfRenderer?.let { return it }
-        val pfd = context.contentResolver.openFileDescriptor(Uri.parse(document.uri), "r")
+        val pfd = openFileDescriptor(Uri.parse(document.uri))
             ?: error("Unable to open ${document.title}")
         descriptor = pfd
         return PdfRenderer(pfd).also { pdfRenderer = it }
     }
 
-    private fun imageBounds(): Size = context.contentResolver.openInputStream(Uri.parse(document.uri)).use { input ->
+    private fun imageBounds(pageIndex: Int): Size = openInputStream(imageUris.getOrElse(pageIndex) { imageUris.first() }).use { input ->
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeStream(input, null, options)
         Size(options.outWidth.coerceAtLeast(1), options.outHeight.coerceAtLeast(1))
     }
 
-    private fun decodeImage(targetWidth: Int, targetHeight: Int): Bitmap? {
-        val uri = Uri.parse(document.uri)
+    private fun decodeImage(pageIndex: Int, targetWidth: Int, targetHeight: Int): Bitmap? {
+        val uri = imageUris.getOrElse(pageIndex) { imageUris.first() }
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri).use { input ->
+        openInputStream(uri).use { input ->
             BitmapFactory.decodeStream(input, null, bounds)
         }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
@@ -102,9 +105,21 @@ class DocumentRenderEngine(
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
-        return context.contentResolver.openInputStream(uri).use { input ->
+        return openInputStream(uri).use { input ->
             BitmapFactory.decodeStream(input, null, options)
         }
+    }
+
+    private fun openInputStream(uri: Uri) = if (uri.scheme == "file") {
+        uri.path?.let(::File)?.inputStream()
+    } else {
+        context.contentResolver.openInputStream(uri)
+    }
+
+    private fun openFileDescriptor(uri: Uri): ParcelFileDescriptor? = if (uri.scheme == "file") {
+        uri.path?.let { ParcelFileDescriptor.open(File(it), ParcelFileDescriptor.MODE_READ_ONLY) }
+    } else {
+        context.contentResolver.openFileDescriptor(uri, "r")
     }
 
     private fun safeScaleForMemory(width: Int, height: Int): Float {

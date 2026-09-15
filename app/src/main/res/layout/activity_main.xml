@@ -37,7 +37,7 @@
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
             android:layout_weight="1"
-            android:text="@string/import_image"
+            android:text="@string/import_images"
             android:textAllCaps="false" />
 
         <ImageButton
@@ -63,6 +63,32 @@
         android:inputType="text"
         android:maxLines="1"
         android:padding="12dp" />
+
+    <RadioGroup
+        android:id="@+id/library_layout_toggle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="2dp"
+        android:orientation="horizontal">
+
+        <RadioButton
+            android:id="@+id/list_view_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:checked="true"
+            android:text="@string/list_view"
+            android:textColor="@color/roman_ink"
+            android:textAllCaps="false" />
+
+        <RadioButton
+            android:id="@+id/grid_view_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/grid_view"
+            android:textColor="@color/roman_ink"
+            android:textAllCaps="false" />
+    </RadioGroup>
 
     <FrameLayout
         android:layout_width="match_parent"

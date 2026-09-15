@@ -31,6 +31,7 @@ class LibraryAdapter(
     private val onLongClick: (DocumentEntity) -> Unit
 ) : ListAdapter<DocumentEntity, LibraryAdapter.Holder>(DIFF) {
     private val allItems = ArrayList<DocumentEntity>()
+    private var gridMode = false
 
     fun setAll(items: List<DocumentEntity>) {
         allItems.clear()
@@ -43,8 +44,20 @@ class LibraryAdapter(
         submitList(if (normalized.isBlank()) allItems.toList() else allItems.filter { it.title.lowercase().contains(normalized) })
     }
 
+    fun setGridMode(enabled: Boolean) {
+        if (gridMode == enabled) return
+        gridMode = enabled
+        notifyDataSetChanged()
+    }
+
+    override fun getItemViewType(position: Int): Int = if (gridMode) VIEW_TYPE_GRID else VIEW_TYPE_LIST
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder = Holder(
-        LayoutInflater.from(parent.context).inflate(R.layout.item_document, parent, false)
+        LayoutInflater.from(parent.context).inflate(
+            if (viewType == VIEW_TYPE_GRID) R.layout.item_document_grid else R.layout.item_document,
+            parent,
+            false
+        )
     )
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
@@ -72,8 +85,18 @@ class LibraryAdapter(
                 }
             }
         }
-        holder.itemView.setOnClickListener { onClick(document) }
-        holder.itemView.setOnLongClickListener { onLongClick(document); true }
+        holder.itemView.setOnClickListener {
+            val currentPosition = holder.bindingAdapterPosition
+            if (currentPosition != RecyclerView.NO_POSITION) {
+                val clicked = getItem(currentPosition)
+                onClick(clicked)
+            }
+        }
+        holder.itemView.setOnLongClickListener {
+            val currentPosition = holder.bindingAdapterPosition
+            if (currentPosition != RecyclerView.NO_POSITION) onLongClick(getItem(currentPosition))
+            true
+        }
     }
 
     override fun onViewRecycled(holder: Holder) {
@@ -90,6 +113,8 @@ class LibraryAdapter(
     }
 
     companion object {
+        private const val VIEW_TYPE_LIST = 0
+        private const val VIEW_TYPE_GRID = 1
         private val DIFF = object : DiffUtil.ItemCallback<DocumentEntity>() {
             override fun areItemsTheSame(oldItem: DocumentEntity, newItem: DocumentEntity): Boolean = oldItem.id == newItem.id
             override fun areContentsTheSame(oldItem: DocumentEntity, newItem: DocumentEntity): Boolean = oldItem == newItem
@@ -109,6 +134,7 @@ class PdfPageAdapter(
     private val onErase: (Int, List<Long>) -> Unit
 ) : RecyclerView.Adapter<PdfPageAdapter.Holder>() {
     private val toolByPage = HashMap<Int, String>()
+    private var currentMode = ReaderMode.VIEW
     private var currentTool = AnnotationTools.NONE
     private var currentInkWidth = 0.0045f
     private var currentInkColor = Color.rgb(34, 74, 150)
@@ -124,6 +150,7 @@ class PdfPageAdapter(
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
         holder.pageView.bind(position, renderer, scope, strokesForPage(position))
+        holder.pageView.setMode(currentMode)
         holder.pageView.setTool(toolByPage[position] ?: currentTool)
         holder.pageView.setInkWidth(currentInkWidth)
         holder.pageView.setInkColor(currentInkColor)
@@ -156,6 +183,15 @@ class PdfPageAdapter(
         attachedRecycler?.let { recycler ->
             for (index in 0 until itemCount) {
                 (recycler.findViewHolderForAdapterPosition(index) as? Holder)?.pageView?.setTool(tool)
+            }
+        }
+    }
+
+    fun setMode(mode: ReaderMode) {
+        currentMode = mode
+        attachedRecycler?.let { recycler ->
+            for (index in 0 until itemCount) {
+                (recycler.findViewHolderForAdapterPosition(index) as? Holder)?.pageView?.setMode(mode)
             }
         }
     }

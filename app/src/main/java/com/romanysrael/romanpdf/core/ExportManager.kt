@@ -34,7 +34,11 @@ object ExportManager {
             (size.height * scale).toInt().coerceAtLeast(1),
             forPrint = true
         ) ?: error("Unable to render page")
-        val output = File(exportDirectory(context), "${safeName(document.title)}_page_${pageIndex + 1}.${format.extension}")
+        val output = uniqueOutput(
+            exportDirectory(context),
+            "${safeBaseName(document.title)}_page_${pageIndex + 1}",
+            format.extension
+        )
         try {
             val canvas = Canvas(bitmap)
             drawStrokes(canvas, bitmap.width.toFloat(), bitmap.height.toFloat(), strokes)
@@ -54,7 +58,7 @@ object ExportManager {
         strokesForPage: suspend (Int) -> List<Stroke>,
         onPage: suspend (Int, Int) -> Unit = { _, _ -> }
     ): File = withContext(Dispatchers.IO) {
-        val output = File(exportDirectory(context), "${safeName(document.title)}_annotated.pdf")
+        val output = uniqueOutput(exportDirectory(context), "${safeBaseName(document.title)}_annotated", "pdf")
         val pdf = PdfDocument()
         try {
             val count = renderer.pageCount()
@@ -110,10 +114,25 @@ object ExportManager {
 
     private fun exportDirectory(context: Context): File = File(context.filesDir, "exports").apply { mkdirs() }
 
-    private fun safeName(title: String): String = title
+    private fun safeBaseName(title: String): String = title
+        .substringBeforeLast('.', title)
         .replace(Regex("[^A-Za-z0-9._-]+"), "_")
         .trim('_')
         .ifBlank { "roman_pdf" }
+
+    private fun uniqueOutput(directory: File, baseName: String, extension: String): File {
+        val safeBase = baseName
+            .replace(Regex("[^A-Za-z0-9._-]+"), "_")
+            .trim('_')
+            .ifBlank { "roman_pdf" }
+        var candidate = File(directory, "$safeBase.$extension")
+        var suffix = 1
+        while (candidate.exists()) {
+            candidate = File(directory, "$safeBase ($suffix).$extension")
+            suffix += 1
+        }
+        return candidate
+    }
 
     enum class ImageFormat(val extension: String, val compression: Bitmap.CompressFormat) {
         PNG("png", Bitmap.CompressFormat.PNG),

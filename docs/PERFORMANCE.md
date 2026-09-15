@@ -10,18 +10,20 @@ Measured through ADB during this implementation:
 - ABI: arm64-v8a
 - Physical display: 800×1280
 - `/proc/meminfo` at inspection: 3,852,040 kB total, 2,130,428 kB available
-- Final debug APK: 44,226,461 bytes; R8/resource-shrunk release APK: 37,411,183 bytes (unsigned)
+- Final debug APK: 46,315,738 bytes; R8/resource-shrunk release APK: 38,823,463 bytes (unsigned)
 
 ## Decisions made for the device
 
 - `PdfRenderer` is the display path; PDFBox is limited to on-demand text indexing.
 - The reader is a horizontally paged RecyclerView with no all-pages bitmap list.
-- Page bitmaps are display-sized and capped at 24 MiB per render.
+- Page bitmaps are display-sized and capped at 24 MiB per render; a three-entry reference-counted reader cache retains the visible page and bounded neighbors.
 - A single synchronized renderer serializes page work and closes every `PdfRenderer.Page` immediately.
 - Image pages use bounds-only inspection plus sampled decode; startup never loads every image page.
 - Thumbnails are lazy and cached as lossy WebP; startup does not parse every library PDF or eagerly decode every grid tile.
 - Touch events are accumulated in memory and strokes are inserted after a gesture, not on every MotionEvent.
 - Indexing and recognition run only when needed; no periodic background service is used.
+
+Tap navigation retains the previous displayed bitmap until the replacement page is ready. The render job uses a page/generation check before swapping it, and prefetches only the adjacent in-range pages. This removes the old `recycle -> null -> render` gap that exposed the dark background during rapid tap navigation without retaining a full-document bitmap set.
 
 Multi-image documents keep only their source URI list in Room. The reader decodes the requested page at display size, and RecyclerView/lazy thumbnail binding provides a small previous/current/next-style working set rather than retaining all page bitmaps. Export is intentionally sequential and can request a higher-quality render one page at a time.
 
@@ -29,15 +31,15 @@ The edit gesture path does not poll or run a recognizer: one-finger strokes are 
 
 ## Observations from the real-device smoke pass
 
-The test PDF was a 3-page text PDF. Import generated a small first-page thumbnail and completed text indexing. Opening it displayed page 1 without rendering the other pages up front. Horizontal swipes moved to pages 2 and 3, and right-side tapping advanced one page. The overview displayed the three lazily requested thumbnails.
+The final device pass used the restored 146-document library. Opening a multi-page PDF displayed only the requested page initially; neighboring pages were rendered through the bounded cache, horizontal paging and right-side tapping advanced correctly, and the overview remained lazy. A six-page image document was also opened and paged after importing six selected image files as one document.
 
 The observed process memory from `dumpsys meminfo` was approximately:
 
-- Empty library after a final cold start: 61,862 kB total PSS.
-- Open reader after page rendering and several page changes: 76,327 kB total PSS.
-- Earlier annotation pass: 96,076 kB total PSS, with no runaway growth observed.
+- Cold library after restoring 146 PDFs: 74,742 kB total PSS.
+- Settled one-page reader opened through the library: 105,700 kB total PSS.
+- The larger eight-page reader sample settled between 113,661 and 121,962 kB while the visible/neighbor bitmap working set filled; no runaway growth was observed.
 
-The final cold start measured 2,308 ms (`am start -W`, `LaunchState: COLD`). During a two-page swipe sample, `dumpsys gfxinfo` reported 37 rendered frames and 10 janky frames (27.03%); the 50th percentile was 8 ms and the 90th percentile was 105 ms. The app reported 0.0% in the sampled idle `top` line after settling. The jank was concentrated in page render/transition work rather than an idle loop. The app showed no crash or ANR in the smoke logcat samples.
+The final cold start measured 2,935 ms (`am start -W`, `LaunchState: COLD`). In a fresh paging sample after reset, `dumpsys gfxinfo` reported 45 rendered frames and 2 janky frames (4.44%); the 50th percentile was 8 ms and the 90th percentile was 9 ms. The transition capture stayed on page content at 11.66% dark-background pixels in every sampled frame, compared with the old blank-frame behavior. The only fatal exceptions retained in the tablet log were unrelated system picker/accessibility-service errors; no ROMAN PDF crash or ANR was observed.
 
 Cold start, import, reader open, paging, annotation persistence, FTS search, page PNG export, annotated PDF export, Sharesheet launch, list/grid switching, fullscreen recovery, external `ACTION_VIEW`, and a six-page image document were exercised on the tablet. Further profiling with large, complex PDFs is still recommended before treating those measurements as universal targets.
 

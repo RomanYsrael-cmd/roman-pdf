@@ -14,13 +14,17 @@ App-private files are limited to:
 - `files/exports/` — one-page images and exported PDFs ready for sharing.
 - `files/source_cache/` — materialized external sources whose URI grant cannot be made durable.
 
-The database contains document metadata, compact vector strokes, typed notes, and the FTS4 search table. Stroke points are normalized to the page and encoded as a compact `x,y,pressure,time;…` string, avoiding one Room row per touch point.
+The database contains document metadata, compact vector strokes, typed notes, persistent page bookmarks, and the FTS4 search table. A bookmark is the unique `(documentId, pageIndex)` pair, so it remains valid for both PDF pages and image-document pages and is removed with its document. Stroke points are normalized to the page and encoded as a compact `x,y,pressure,time;…` string, avoiding one Room row per touch point.
+
+## Branding
+
+The launcher and round launcher resources use the supplied ROMAN PDF mark as the source artwork. The outer white margin is made transparent for adaptive-icon composition; the mark itself is not redrawn or renamed. The same mark is used at a restrained size in the empty-library state, and Android 12+ uses the branded adaptive icon for the system splash handoff.
 
 ## PDF rendering pipeline
 
 `DocumentRenderEngine` opens one `ParcelFileDescriptor` and one `PdfRenderer` per PDF reader. All renderer access is serialized because `PdfRenderer` is not a multi-reader object. A page view requests only its own display-sized bitmap from a coroutine on `Dispatchers.IO`. For image documents, the same page view asks `BitmapFactory` for bounds, chooses an `inSampleSize`, and decodes only the requested page. The reader uses a horizontal `RecyclerView` with `PagerSnapHelper`, so Android creates and binds only the visible page plus a small RecyclerView prefetch window.
 
-Pages are closed immediately after rendering. Recycled page views cancel obsolete render jobs and release their bitmap. Image documents use sampled `BitmapFactory` decoding based on the view target size. A hard working bitmap cap prevents an unusually large page from creating an uncontrolled allocation.
+Pages are closed immediately after rendering. Each reader owns a three-entry, reference-counted `PageBitmapCache` keyed by page and target size. The visible page is retained while a replacement is rendered, and the previous/next bounded neighbors are prefetched after a successful render. Recycled page views cancel obsolete work and release their cache reference. This keeps a tap navigation transition painted continuously without exposing the dark reader background as a loading frame. Image documents use sampled `BitmapFactory` decoding based on the view target size. A hard working bitmap cap prevents an unusually large page from creating an uncontrolled allocation.
 
 ## Annotation coordinate system
 
@@ -30,13 +34,15 @@ Pen/highlighter input stays in memory during a gesture and is inserted once on s
 
 Reader input is explicitly arbitrated by `ReaderMode`. View mode gives one finger to zoomed panning and lets the parent pager receive a horizontal swipe at fit scale. Edit mode gives one finger to pen, highlighter, or eraser input even when zoomed. A second pointer cancels an active annotation cleanly and owns centroid pan plus scale; after multi-touch ends, the next single pointer starts a fresh interaction. Edit-mode double tap resets the page transform; View-mode double tap toggles a useful zoom. Tap-origin page changes use immediate RecyclerView positioning, while swipe-origin changes retain the pager snap animation.
 
-The reader can apply an immersive WindowInsets-based fullscreen state. App chrome is hidden while the document remains full-bleed, system bars can be recovered by a standard edge gesture, and a center tap restores app chrome without permanently forcing the bars visible. The preference is scoped to reader use and is restored on recreation.
+The reader can apply an immersive WindowInsets-based fullscreen state. `WindowCompat.setDecorFitsSystemWindows(window, false)` keeps the reader edge-to-edge, while `WindowInsetsControllerCompat` hides system bars with transient-by-swipe recovery. App chrome is hidden while the document remains full-bleed; fullscreen keeps the viewport padding at zero even while bars are transiently revealed, and exiting fullscreen reapplies the current bar/cutout insets. A center tap restores app chrome without permanently forcing the bars visible. The preference is scoped to reader use and is restored on recreation.
+
+Bookmarks are available from the reader toolbar. The current page toggles in one action, and the overflow menu presents the sorted persistent page list; selecting an entry performs an immediate page jump. The list is observed from Room, so the filled state and the page list survive activity recreation and process restart.
 
 ## Library layouts and external open
 
 The library has one data source and one adapter for both List and adaptive Grid modes. Grid span count is computed from the measured width and density, and the choice is stored in `library_preferences`. Thumbnails are still requested only when a bound tile needs one; switching layouts does not create an eager thumbnail batch. Long-press actions resolve the current adapter position at event time, so a last-opened resort cannot dispatch an old document.
 
-`MainActivity` declares `application/pdf` for `ACTION_VIEW` and handles both cold starts and `singleTop` new intents. It determines the display name from provider metadata or the URI, allocates a duplicate-safe title, creates library metadata, opens `ReaderActivity`, and launches PDF text indexing separately. This keeps external opening responsive and lets the same reader/annotation/export path handle files opened from Downloads or another file manager.
+`MainActivity` declares `application/pdf` for `ACTION_VIEW` and handles both cold starts and `singleTop` new intents. It determines the display name from provider metadata or the URI, allocates a duplicate-safe title, creates library metadata, opens `ReaderActivity`, and launches PDF text indexing separately. The in-app PDF picker accepts one or many PDFs; single-file imports retain the normal indexing path, while a large batch can complete metadata/page validation without blocking the migration on one unusually expensive text parser. This keeps external opening responsive and lets the same reader/annotation/export path handle files opened from Downloads or another file manager.
 
 ## Search and indexing
 

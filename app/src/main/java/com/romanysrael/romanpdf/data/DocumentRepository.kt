@@ -129,9 +129,17 @@ class DocumentRepository(
     suspend fun deleteDocument(document: DocumentEntity) = withContext(Dispatchers.IO) {
         database.strokeDao().deleteForDocument(document.id)
         database.noteDao().deleteForDocument(document.id)
+        database.bookmarkDao().deleteForDocument(document.id)
         database.searchDao().deleteForDocument(document.id.toString())
         database.documentDao().delete(document)
         ThumbnailStore(context).delete(document.id)
+    }
+
+    fun observeBookmarks(documentId: Long) = database.bookmarkDao().observeForDocument(documentId)
+
+    suspend fun setBookmark(documentId: Long, pageIndex: Int, bookmarked: Boolean) = withContext(Dispatchers.IO) {
+        if (bookmarked) database.bookmarkDao().insert(BookmarkEntity(documentId, pageIndex))
+        else database.bookmarkDao().delete(documentId, pageIndex)
     }
 
     suspend fun saveNote(note: NoteEntity): Long = withContext(Dispatchers.IO) {

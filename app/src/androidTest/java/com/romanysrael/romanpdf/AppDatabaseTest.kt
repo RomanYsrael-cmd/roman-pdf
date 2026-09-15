@@ -4,6 +4,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.romanysrael.romanpdf.data.AppDatabase
+import com.romanysrael.romanpdf.data.BookmarkEntity
 import com.romanysrael.romanpdf.data.DocumentEntity
 import com.romanysrael.romanpdf.data.DocumentKinds
 import com.romanysrael.romanpdf.data.PageSourceCodec
@@ -70,5 +71,24 @@ class AppDatabaseTest {
         val stored = database.documentDao().getBySourceKey("romanpdf:image-document:test")
         assertEquals(documentId, stored?.id)
         assertEquals(sources, stored?.pageSourceList()?.map { it.uri })
+    }
+
+    @Test
+    fun bookmarksPersistAsUniqueDocumentPagePairs() = runBlocking {
+        val documentId = database.documentDao().insert(
+            DocumentEntity(title = "Bookmark test", uri = "content://test/bookmarks.pdf", mimeType = "application/pdf", kind = DocumentKinds.PDF)
+        )
+
+        database.bookmarkDao().insert(BookmarkEntity(documentId, pageIndex = 0, createdAt = 10L))
+        database.bookmarkDao().insert(BookmarkEntity(documentId, pageIndex = 3, createdAt = 20L))
+        database.bookmarkDao().insert(BookmarkEntity(documentId, pageIndex = 3, createdAt = 30L))
+
+        val stored = database.bookmarkDao().getForDocument(documentId)
+        assertEquals(listOf(0, 3), stored.map { it.pageIndex })
+        assertEquals(30L, stored.last().createdAt)
+        assertTrue(database.bookmarkDao().exists(documentId, 3))
+
+        database.bookmarkDao().delete(documentId, 3)
+        assertEquals(listOf(0), database.bookmarkDao().getForDocument(documentId).map { it.pageIndex })
     }
 }

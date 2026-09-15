@@ -3,6 +3,7 @@ package com.romanysrael.romanpdf.data
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Fts4
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import java.nio.charset.StandardCharsets
@@ -104,6 +105,26 @@ data class NoteEntity(
     val title: String = "Note",
     val content: String,
     val updatedAt: Long = System.currentTimeMillis()
+)
+
+/** A bookmark is a stable document/page pair and works for both PDF and image documents. */
+@Entity(
+    tableName = "bookmarks",
+    primaryKeys = ["documentId", "pageIndex"],
+    foreignKeys = [
+        ForeignKey(
+            entity = DocumentEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["documentId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["documentId"])]
+)
+data class BookmarkEntity(
+    val documentId: Long,
+    val pageIndex: Int,
+    val createdAt: Long = System.currentTimeMillis()
 )
 
 /** FTS keeps only searchable text and small routing fields; PDFs and images stay in files/content URIs. */

@@ -30,12 +30,12 @@ class MainActivity : AppCompatActivity() {
     private val app: RomanPdfApplication get() = application as RomanPdfApplication
     private val preferences by lazy { getSharedPreferences(PREFERENCES, MODE_PRIVATE) }
     private lateinit var adapter: LibraryAdapter
-    private lateinit var emptyView: android.widget.TextView
+    private lateinit var emptyView: android.view.View
     private lateinit var libraryList: RecyclerView
     private lateinit var layoutToggle: RadioGroup
 
-    private val pdfPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { importUri(it, DocumentKinds.PDF, "application/pdf") }
+    private val pdfPicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) importPdfs(uris)
     }
     private val imagePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isEmpty()) return@registerForActivityResult
@@ -49,7 +49,7 @@ class MainActivity : AppCompatActivity() {
         val toolbar = findViewById<Toolbar>(R.id.main_toolbar)
         setSupportActionBar(toolbar)
 
-        emptyView = findViewById(R.id.library_empty)
+        emptyView = findViewById(R.id.library_empty_container)
         libraryList = findViewById(R.id.library_list)
         adapter = LibraryAdapter(
             scope = lifecycleScope,
@@ -123,6 +123,27 @@ class MainActivity : AppCompatActivity() {
                 if (kind == DocumentKinds.PDF) app.repository.indexDocument(id)
             }.onSuccess {
                 Toast.makeText(this@MainActivity, R.string.added_to_library, Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(this@MainActivity, it.message ?: getString(R.string.import_failed), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun importPdfs(uris: List<Uri>) {
+        val selected = uris.distinctBy(Uri::toString)
+        Toast.makeText(this, getString(R.string.importing_pdf_count, selected.size), Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            runCatching {
+                selected.forEach { uri ->
+                    val id = app.repository.importUri(uri, "application/pdf", DocumentKinds.PDF)
+                    if (selected.size == 1) app.repository.indexDocument(id)
+                }
+            }.onSuccess {
+                Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.added_pdf_count, selected.size),
+                    Toast.LENGTH_LONG
+                ).show()
             }.onFailure {
                 Toast.makeText(this@MainActivity, it.message ?: getString(R.string.import_failed), Toast.LENGTH_LONG).show()
             }

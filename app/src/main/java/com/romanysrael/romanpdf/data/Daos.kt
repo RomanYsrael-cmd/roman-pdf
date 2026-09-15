@@ -81,6 +81,27 @@ interface NoteDao {
 }
 
 @Dao
+interface BookmarkDao {
+    @Query("SELECT * FROM bookmarks WHERE documentId = :documentId ORDER BY pageIndex")
+    fun observeForDocument(documentId: Long): Flow<List<BookmarkEntity>>
+
+    @Query("SELECT * FROM bookmarks WHERE documentId = :documentId ORDER BY pageIndex")
+    suspend fun getForDocument(documentId: Long): List<BookmarkEntity>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM bookmarks WHERE documentId = :documentId AND pageIndex = :pageIndex)")
+    suspend fun exists(documentId: Long, pageIndex: Int): Boolean
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(bookmark: BookmarkEntity)
+
+    @Query("DELETE FROM bookmarks WHERE documentId = :documentId AND pageIndex = :pageIndex")
+    suspend fun delete(documentId: Long, pageIndex: Int)
+
+    @Query("DELETE FROM bookmarks WHERE documentId = :documentId")
+    suspend fun deleteForDocument(documentId: Long)
+}
+
+@Dao
 interface SearchDao {
     @Insert
     suspend fun insert(entry: SearchEntryFts)

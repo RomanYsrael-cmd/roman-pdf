@@ -24,7 +24,9 @@ import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.PagerSnapHelper
@@ -70,6 +72,7 @@ class ReaderActivity : AppCompatActivity() {
     private var highlighterColor = Color.YELLOW
     private var chromeVisible = true
     private var fullscreenEnabled = false
+    private var bookmarkedPages: Set<Int> = emptySet()
     private val strokesByPage = HashMap<Int, MutableList<Stroke>>()
     private val loadedPages = HashSet<Int>()
     private val undoStack = ArrayDeque<EditAction>()
@@ -136,6 +139,14 @@ class ReaderActivity : AppCompatActivity() {
             finish()
             return
         }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                app.repository.observeBookmarks(documentId).collect { bookmarks ->
+                    bookmarkedPages = bookmarks.map { it.pageIndex }.toSet()
+                    invalidateOptionsMenu()
+                }
+            }
+        }
         restoredPage = savedInstanceState?.getInt(KEY_PAGE)
         currentPage = restoredPage ?: 0
         configurePager()
@@ -148,12 +159,14 @@ class ReaderActivity : AppCompatActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(readerRoot) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            val insetContent = !fullscreenEnabled
             view.setPadding(
-                max(bars.left, cutout.left),
-                max(bars.top, cutout.top),
-                max(bars.right, cutout.right),
-                max(bars.bottom, cutout.bottom)
+                if (insetContent) max(bars.left, cutout.left) else 0,
+                if (insetContent) max(bars.top, cutout.top) else 0,
+                if (insetContent) max(bars.right, cutout.right) else 0,
+                if (insetContent) max(bars.bottom, cutout.bottom) else 0
             )
+            pageList?.requestLayout()
             insets
         }
         ViewCompat.requestApplyInsets(readerRoot)
@@ -167,7 +180,10 @@ class ReaderActivity : AppCompatActivity() {
         if (enabled) controller.hide(WindowInsetsCompat.Type.systemBars())
         else controller.show(WindowInsetsCompat.Type.systemBars())
         setChromeVisible(!enabled)
+        if (enabled) readerRoot.setPadding(0, 0, 0, 0)
         ViewCompat.requestApplyInsets(readerRoot)
+        pageList?.requestLayout()
+        pageList?.invalidate()
         invalidateOptionsMenu()
     }
 
@@ -241,6 +257,7 @@ class ReaderActivity : AppCompatActivity() {
     private fun onPageSettled(page: Int) {
         currentPage = page.coerceIn(0, pageCount - 1)
         supportActionBar?.subtitle = getString(R.string.reader_page, currentPage + 1, pageCount)
+        invalidateOptionsMenu()
         lifecycleScope.launch { app.repository.updateLastPage(documentId, currentPage) }
         if (loadedPages.add(currentPage)) {
             lifecycleScope.launch {
@@ -431,6 +448,47 @@ class ReaderActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun toggleCurrentBookmark() {
+        val page = currentPage
+        val shouldBookmark = page !in bookmarkedPages
+        bookmarkedPages = if (shouldBookmark) bookmarkedPages + page else bookmarkedPages - page
+        invalidateOptionsMenu()
+        lifecycleScope.launch {
+            runCatching { app.repository.setBookmark(documentId, page, shouldBookmark) }
+                .onSuccess {
+                    Toast.makeText(
+                        this@ReaderActivity,
+                        getString(if (shouldBookmark) R.string.bookmark_page else R.string.remove_bookmark),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                .onFailure {
+                    bookmarkedPages = if (shouldBookmark) bookmarkedPages - page else bookmarkedPages + page
+                    invalidateOptionsMenu()
+                    Toast.makeText(this@ReaderActivity, it.message ?: getString(R.string.save_failed), Toast.LENGTH_LONG).show()
+                }
+        }
+    }
+
+    private fun showBookmarks() {
+        val pages = bookmarkedPages.sorted()
+        if (pages.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.bookmarks)
+                .setMessage(R.string.no_bookmarks)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.bookmarks)
+            .setItems(pages.map { getString(R.string.bookmark_page_item, it + 1) }.toTypedArray()) { _, which ->
+                goToPage(pages[which], NavigationSource.PAGE_JUMP)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun showPageOverview() {
         val loadedDocument = document ?: return
         val renderEngine = engine ?: return
@@ -574,11 +632,18 @@ class ReaderActivity : AppCompatActivity() {
         menu.findItem(R.id.action_fullscreen)?.title = getString(
             if (fullscreenEnabled) R.string.exit_fullscreen else R.string.enter_fullscreen
         )
+        menu.findItem(R.id.action_bookmark)?.apply {
+            val isBookmarked = currentPage in bookmarkedPages
+            icon = getDrawable(if (isBookmarked) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark_outline)
+            title = getString(if (isBookmarked) R.string.remove_bookmark else R.string.bookmark_page)
+        }
         return super.onPrepareOptionsMenu(menu)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_overview -> { showPageOverview(); true }
+        R.id.action_bookmark -> { toggleCurrentBookmark(); true }
+        R.id.action_bookmarks -> { showBookmarks(); true }
         R.id.action_export -> { showExportChooser(); true }
         R.id.action_recognize -> { recognizeCurrentPage(); true }
         R.id.action_jump -> { showPageJump(); true }

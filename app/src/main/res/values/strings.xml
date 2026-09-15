@@ -11,6 +11,12 @@
     <string name="search_library">Filter library</string>
     <string name="empty_library">Your library is empty\nImport a PDF or image to begin.</string>
     <string name="page_overview">Page overview</string>
+    <string name="bookmark_page">Bookmark page</string>
+    <string name="remove_bookmark">Remove bookmark</string>
+    <string name="view_bookmarks">View bookmarks</string>
+    <string name="bookmarks">Bookmarks</string>
+    <string name="no_bookmarks">No bookmarked pages yet.</string>
+    <string name="bookmark_page_item">Page %1$d</string>
     <string name="pen">Pen</string>
     <string name="highlighter">Highlighter</string>
     <string name="eraser">Eraser</string>
@@ -24,8 +30,11 @@
     <string name="list_view">List</string>
     <string name="grid_view">Grid</string>
     <string name="importing">Importing…</string>
+    <string name="importing_pdf_count">Importing %1$d PDFs…</string>
     <string name="added_to_library">Added to library</string>
+    <string name="added_pdf_count">Added %1$d PDFs to the library</string>
     <string name="import_failed">Import failed</string>
+    <string name="save_failed">Unable to save the change</string>
     <string name="image_document_title">Image document</string>
     <string name="image_document_title_hint">Document title</string>
     <string name="image_document_pages">%1$d selected images will become one document.</string>

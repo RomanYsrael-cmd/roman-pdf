@@ -5,8 +5,11 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.romanysrael.romanpdf.data.AppDatabase
 import com.romanysrael.romanpdf.data.DocumentEntity
+import com.romanysrael.romanpdf.data.DocumentKinds
+import com.romanysrael.romanpdf.data.PageSourceCodec
 import com.romanysrael.romanpdf.data.SearchEntryFts
 import com.romanysrael.romanpdf.data.SearchSources
+import com.romanysrael.romanpdf.data.pageSourceList
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -43,5 +46,29 @@ class AppDatabaseTest {
         assertEquals(1, hits.size)
         assertEquals(documentId.toString(), hits.single().documentId)
         assertTrue(hits.single().content.contains("offline"))
+    }
+
+    @Test
+    fun orderedImageSourcesAndStableSourceKeyPersist() = runBlocking {
+        val sources = listOf(
+            "content://picker/first.jpg",
+            "content://picker/second.jpg",
+            "content://picker/third.jpg"
+        )
+        val documentId = database.documentDao().insert(
+            DocumentEntity(
+                title = "Lecture (3 pages)",
+                uri = "romanpdf:image-document:test",
+                mimeType = "image/*",
+                kind = DocumentKinds.IMAGE,
+                pageCount = sources.size,
+                pageSources = PageSourceCodec.encode(sources),
+                sourceKey = "romanpdf:image-document:test"
+            )
+        )
+
+        val stored = database.documentDao().getBySourceKey("romanpdf:image-document:test")
+        assertEquals(documentId, stored?.id)
+        assertEquals(sources, stored?.pageSourceList()?.map { it.uri })
     }
 }

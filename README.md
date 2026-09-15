@@ -14,7 +14,10 @@ ROMAN PDF is an offline-first Android PDF reader with lightweight annotation, no
 - Optional English ML Kit Digital Ink recognition, started explicitly after a model is available.
 - Page PNG/JPEG export, sequential annotated PDF export, and Android Sharesheet sharing through `FileProvider`, with collision-safe output names.
 - JPEG, PNG, and WebP image import as single-page documents or one ordered multi-image document.
+- Branded library toolbar with native search, overflow imports, persistent List/Grid choice, and eight persistent sort choices (name, opened/imported time, and page count).
+- Search results with readable query states, clear/back behavior, snippets, and highlighted matches.
 - Adaptive List/Grid library layouts, remembered per device, and an immersive reader mode with recoverable system bars.
+- Reliable rapid paging: serialized `PdfRenderer` access, cancellation/generation guards, lease-owned page bitmaps, adjacent prefetch, and a visible retry state instead of a blank page.
 - PDF `ACTION_VIEW` handling so ROMAN PDF appears as an Android PDF “Open with” target.
 
 ## Design goals
@@ -51,6 +54,14 @@ gradlew.bat assembleRelease
 ```
 
 The debug APK is created at `app/build/outputs/apk/debug/app-debug.apk`. Release signing is intentionally not configured; a release build uses R8/resource shrinking when signing is supplied by the environment.
+
+For a repeatable real-device reader stress run, open a long document in the debug app and run Windows PowerShell (the legacy Windows PowerShell host is used for screenshot sampling):
+
+```text
+powershell.exe -ExecutionPolicy Bypass -File tools\device-navigation-stress.ps1 -Serial <adb-serial> -Operations 1000 -CaptureDirectory work\device-stress
+```
+
+The runner records screenshot blank signals, process-death signals, periodic PSS memory, the foreground activity, and a filtered logcat snapshot. It requires `ReaderActivity` to already be foreground because that activity is intentionally private to the app.
 
 ## Install and run
 
@@ -100,4 +111,4 @@ PDFs, images, notes, and strokes stay on the device. There is no account, ads, t
 
 ## Project status
 
-The debug build, device installation, image-document flow, immersive reader flow, PDF `ACTION_VIEW` flow, and core annotation smoke flows have been validated on the target tablet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PERFORMANCE.md](docs/PERFORMANCE.md) for implementation and measurement notes.
+The debug build, device installation, image-document flow, immersive reader flow, PDF `ACTION_VIEW` flow, core annotation smoke flows, library search/sort/view persistence, and the reliability stress runner have been validated on the target tablet. The final reader pass completed 1,000 mixed navigation operations and 500 screenshot samples with no blank signals, process-death signals, or app render/fatal/ANR log lines. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/PERFORMANCE.md](docs/PERFORMANCE.md), and [docs/LINT.md](docs/LINT.md) for implementation and measurement notes.

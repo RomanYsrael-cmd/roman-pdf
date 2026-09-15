@@ -4,6 +4,7 @@ import com.romanysrael.romanpdf.ui.AnnotationTools
 import com.romanysrael.romanpdf.ui.NavigationSource
 import com.romanysrael.romanpdf.ui.PageTransform
 import com.romanysrael.romanpdf.ui.ReaderInteractionPolicy
+import com.romanysrael.romanpdf.ui.ReaderRenderPolicy
 import com.romanysrael.romanpdf.ui.ReaderMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -44,5 +45,13 @@ class ReaderInteractionTest {
         assertTrue(ReaderInteractionPolicy.usesImmediatePositioning(NavigationSource.TAP))
         assertTrue(ReaderInteractionPolicy.usesImmediatePositioning(NavigationSource.SEARCH))
         assertFalse(ReaderInteractionPolicy.usesImmediatePositioning(NavigationSource.SWIPE))
+    }
+
+    @Test
+    fun renderTransitionKeepsPreviousFrameAndPrefetchesOnlyNeighbors() {
+        assertTrue(ReaderRenderPolicy.shouldRetainDisplayedBitmap(hasDisplayedBitmap = true, hasReplacement = false))
+        assertFalse(ReaderRenderPolicy.shouldRetainDisplayedBitmap(hasDisplayedBitmap = true, hasReplacement = true))
+        assertEquals(listOf(0, 2), ReaderRenderPolicy.prefetchPages(pageIndex = 1, pageCount = 3))
+        assertEquals(listOf(0), ReaderRenderPolicy.prefetchPages(pageIndex = 1, pageCount = 2))
     }
 }

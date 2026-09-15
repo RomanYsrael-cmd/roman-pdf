@@ -23,6 +23,15 @@ object ReaderInteractionPolicy {
     fun shouldCancelAnnotationForSecondPointer(mode: ReaderMode): Boolean = mode == ReaderMode.EDIT
 }
 
+object ReaderRenderPolicy {
+    /** The adjacent working set is intentionally bounded to keep the reader responsive on tablets. */
+    fun prefetchPages(pageIndex: Int, pageCount: Int): List<Int> = listOf(pageIndex - 1, pageIndex + 1)
+        .filter { it in 0 until pageCount }
+
+    fun shouldRetainDisplayedBitmap(hasDisplayedBitmap: Boolean, hasReplacement: Boolean): Boolean =
+        hasDisplayedBitmap && !hasReplacement
+}
+
 data class NormalizedPagePoint(val x: Float, val y: Float)
 
 data class ScreenPagePoint(val x: Float, val y: Float)

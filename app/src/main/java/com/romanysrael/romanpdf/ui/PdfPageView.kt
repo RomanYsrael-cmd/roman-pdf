@@ -22,6 +22,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.IdentityHashMap
+import java.util.LinkedHashMap
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -35,6 +37,92 @@ object AnnotationTools {
 
 enum class TapZone { LEFT, CENTER, RIGHT }
 
+data class PageBitmapKey(
+    val pageIndex: Int,
+    val targetWidth: Int,
+    val targetHeight: Int
+)
+
+/** Small shared reader cache with reference counting for displayed and prefetched bitmaps. */
+class PageBitmapCache(private val maxEntries: Int = 3) {
+    private data class Entry(val key: PageBitmapKey, val bitmap: Bitmap)
+
+    private val entries = LinkedHashMap<PageBitmapKey, Entry>(maxEntries, 0.75f, true)
+    private val references = IdentityHashMap<Bitmap, Int>()
+
+    @Synchronized
+    fun acquire(key: PageBitmapKey): Bitmap? {
+        val entry = entries[key] ?: return null
+        if (entry.bitmap.isRecycled) {
+            entries.remove(key)
+            references.remove(entry.bitmap)
+            return null
+        }
+        references[entry.bitmap] = (references[entry.bitmap] ?: 0) + 1
+        return entry.bitmap
+    }
+
+    @Synchronized
+    fun put(key: PageBitmapKey, bitmap: Bitmap): Bitmap {
+        val existing = entries[key]
+        if (existing != null) {
+            if (existing.bitmap.isRecycled) {
+                entries.remove(key)
+                references.remove(existing.bitmap)
+            } else {
+                if (existing.bitmap !== bitmap && !bitmap.isRecycled) bitmap.recycle()
+                return existing.bitmap
+            }
+        }
+        if (bitmap.isRecycled) return bitmap
+        entries[key] = Entry(key, bitmap)
+        references.putIfAbsent(bitmap, 0)
+        while (entries.size > maxEntries) {
+            val eldestKey = entries.entries.first().key
+            val eldest = entries.remove(eldestKey)?.bitmap ?: continue
+            if ((references[eldest] ?: 0) == 0) {
+                references.remove(eldest)
+                if (!eldest.isRecycled) eldest.recycle()
+            }
+        }
+        return bitmap
+    }
+
+    @Synchronized
+    fun contains(key: PageBitmapKey): Boolean {
+        val bitmap = entries[key]?.bitmap ?: return false
+        if (bitmap.isRecycled) {
+            entries.remove(key)
+            references.remove(bitmap)
+            return false
+        }
+        return true
+    }
+
+    @Synchronized
+    fun release(key: PageBitmapKey, bitmap: Bitmap) {
+        val count = references[bitmap] ?: return
+        if (count <= 1) {
+            references.remove(bitmap)
+            if (entries[key]?.bitmap !== bitmap && !bitmap.isRecycled) bitmap.recycle()
+        } else {
+            references[bitmap] = count - 1
+        }
+    }
+
+    @Synchronized
+    fun clear() {
+        val cached = entries.values.map { it.bitmap }
+        entries.clear()
+        cached.forEach { bitmap ->
+            if ((references[bitmap] ?: 0) == 0) {
+                references.remove(bitmap)
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+        }
+    }
+}
+
 /** A page-sized canvas with a bounded bitmap working set and normalized vector ink. */
 class PdfPageView(context: Context) : View(context) {
     var onPageTap: ((pageIndex: Int, zone: TapZone) -> Unit)? = null
@@ -45,7 +133,11 @@ class PdfPageView(context: Context) : View(context) {
     private var renderScope: CoroutineScope? = null
     private var renderJob: Job? = null
     private var boundPageIndex = -1
+    private var documentPageCount = 1
     private var bitmap: Bitmap? = null
+    private var displayedPageIndex = -1
+    private var displayedBitmapKey: PageBitmapKey? = null
+    private var bitmapCache: PageBitmapCache? = null
     private val pageRect = RectF()
     private var strokes: List<Stroke> = emptyList()
     private var activePoints = ArrayList<InkPoint>(64)
@@ -112,11 +204,13 @@ class PdfPageView(context: Context) : View(context) {
         pageIndex: Int,
         renderEngine: DocumentRenderEngine,
         scope: CoroutineScope,
-        pageStrokes: List<Stroke>
+        pageStrokes: List<Stroke>,
+        pageCount: Int = 1
     ) {
+        if (renderer != null && renderer !== renderEngine) releaseDisplayedBitmap()
         renderJob?.cancel()
-        recycleBitmap()
         boundPageIndex = pageIndex
+        documentPageCount = pageCount.coerceAtLeast(1)
         renderer = renderEngine
         renderScope = scope
         strokes = pageStrokes
@@ -134,11 +228,12 @@ class PdfPageView(context: Context) : View(context) {
         renderJob = null
         cancelPendingTap()
         cancelActiveAnnotation()
-        recycleBitmap()
+        releaseDisplayedBitmap()
         renderer = null
         renderScope = null
         boundPageIndex = -1
         strokes = emptyList()
+        documentPageCount = 1
         multiTouch = false
         ignoreSinglePointerUntilDown = false
     }
@@ -176,6 +271,10 @@ class PdfPageView(context: Context) : View(context) {
 
     fun currentTool(): String = tool
 
+    fun setBitmapCache(cache: PageBitmapCache) {
+        bitmapCache = cache
+    }
+
     fun resetZoom() {
         scaleFactor = 1f
         offsetX = 0f
@@ -197,27 +296,59 @@ class PdfPageView(context: Context) : View(context) {
         renderJob?.cancel()
         val targetWidth = (width - 24).coerceAtLeast(240)
         val targetHeight = (height - 24).coerceAtLeast(240)
+        val key = PageBitmapKey(page, targetWidth, targetHeight)
+        val cache = bitmapCache
         renderJob = scope.launch(Dispatchers.IO) {
-            val rendered = runCatching {
-                currentRenderer.renderPage(page, targetWidth, targetHeight)
-            }.getOrNull()
+            var prepared = cache?.acquire(key)
+            if (prepared == null) {
+                val rendered = runCatching {
+                    currentRenderer.renderPage(page, targetWidth, targetHeight)
+                }.getOrNull()
+                if (rendered == null) return@launch
+                if (!isActive) {
+                    rendered.recycle()
+                    return@launch
+                }
+                prepared = if (cache == null) rendered else {
+                    cache.put(key, rendered)
+                    cache.acquire(key)
+                }
+            }
+            val displayed = prepared ?: return@launch
             if (!isActive) {
-                rendered?.recycle()
+                releasePrepared(cache, key, displayed)
                 return@launch
             }
             try {
                 withContext(Dispatchers.Main) {
-                    if (boundPageIndex == page && renderer === currentRenderer && rendered != null) {
-                        recycleBitmap()
-                        bitmap = rendered
+                    if (boundPageIndex == page && renderer === currentRenderer) {
+                        releaseDisplayedBitmap()
+                        bitmap = displayed
+                        displayedPageIndex = page
+                        displayedBitmapKey = key.takeIf { cache != null }
                         invalidate()
                     } else {
-                        rendered?.recycle()
+                        releasePrepared(cache, key, displayed)
                     }
                 }
             } catch (cancelled: CancellationException) {
-                rendered?.recycle()
+                releasePrepared(cache, key, displayed)
                 throw cancelled
+            }
+            if (cache != null && isActive) {
+                ReaderRenderPolicy.prefetchPages(page, documentPageCount).forEach { adjacentPage ->
+                    if (!isActive) return@forEach
+                    val adjacentKey = PageBitmapKey(adjacentPage, targetWidth, targetHeight)
+                    if (cache.contains(adjacentKey)) return@forEach
+                    val adjacent = runCatching {
+                        currentRenderer.renderPage(adjacentPage, targetWidth, targetHeight)
+                    }.getOrNull()
+                    if (adjacent == null || !isActive) {
+                        adjacent?.recycle()
+                    } else {
+                        cache.put(adjacentKey, adjacent)
+                    }
+                }
             }
         }
     }
@@ -231,8 +362,10 @@ class PdfPageView(context: Context) : View(context) {
         canvas.translate(offsetX, offsetY)
         canvas.scale(scaleFactor, scaleFactor)
         canvas.drawBitmap(pageBitmap, null, pageRect, bitmapPaint)
-        strokes.forEach { drawStroke(canvas, it, pageRect) }
-        activeStroke?.let { drawStroke(canvas, it, pageRect) }
+        if (displayedPageIndex == boundPageIndex) {
+            strokes.forEach { drawStroke(canvas, it, pageRect) }
+            activeStroke?.let { drawStroke(canvas, it, pageRect) }
+        }
         canvas.restore()
     }
 
@@ -625,15 +758,32 @@ class PdfPageView(context: Context) : View(context) {
         return sqrt(dx * dx + dy * dy)
     }
 
-    private fun recycleBitmap() {
-        bitmap?.recycle()
+    private fun releasePrepared(cache: PageBitmapCache?, key: PageBitmapKey, bitmap: Bitmap) {
+        if (cache == null) {
+            if (!bitmap.isRecycled) bitmap.recycle()
+        } else {
+            cache.release(key, bitmap)
+        }
+    }
+
+    private fun releaseDisplayedBitmap() {
+        val displayed = bitmap ?: return
+        val key = displayedBitmapKey
+        if (bitmapCache != null && key != null) {
+            bitmapCache?.release(key, displayed)
+        } else if (!displayed.isRecycled) {
+            displayed.recycle()
+        }
         bitmap = null
+        displayedPageIndex = -1
+        displayedBitmapKey = null
     }
 
     override fun onDetachedFromWindow() {
         renderJob?.cancel()
         cancelPendingTap()
         cancelActiveAnnotation()
+        releaseDisplayedBitmap()
         super.onDetachedFromWindow()
     }
 

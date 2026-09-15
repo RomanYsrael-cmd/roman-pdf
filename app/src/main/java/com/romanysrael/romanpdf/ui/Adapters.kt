@@ -133,6 +133,7 @@ class PdfPageAdapter(
     private val onStroke: (Stroke) -> Unit,
     private val onErase: (Int, List<Long>) -> Unit
 ) : RecyclerView.Adapter<PdfPageAdapter.Holder>() {
+    private val bitmapCache = PageBitmapCache(maxEntries = 3)
     private val toolByPage = HashMap<Int, String>()
     private var currentMode = ReaderMode.VIEW
     private var currentTool = AnnotationTools.NONE
@@ -144,12 +145,13 @@ class PdfPageAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder = Holder(
         PdfPageView(parent.context).apply {
+            setBitmapCache(bitmapCache)
             layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         }
     )
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.pageView.bind(position, renderer, scope, strokesForPage(position))
+        holder.pageView.bind(position, renderer, scope, strokesForPage(position), pageCount)
         holder.pageView.setMode(currentMode)
         holder.pageView.setTool(toolByPage[position] ?: currentTool)
         holder.pageView.setInkWidth(currentInkWidth)
@@ -170,6 +172,7 @@ class PdfPageAdapter(
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
         attachedRecycler = null
+        bitmapCache.clear()
     }
 
     fun updateStrokes(pageIndex: Int, strokes: List<Stroke>) {

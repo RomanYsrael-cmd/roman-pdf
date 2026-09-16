@@ -1,5 +1,6 @@
 package com.romanysrael.romanpdf.ui
 
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.text.SpannableString
@@ -92,8 +93,8 @@ class LibraryAdapter(
             document.lastPage + 1,
             relativeTime(document.lastOpenedAt)
         )
-        holder.thumbnail.setImageDrawable(ColorDrawable(Color.rgb(232, 236, 242)))
         holder.job?.cancel()
+        holder.clearThumbnail()
         holder.job = scope.launch(Dispatchers.IO) {
             val renderer = runCatching { DocumentRenderEngine(holder.itemView.context.applicationContext, document) }.getOrNull()
             val bitmap = renderer?.let { engine ->
@@ -101,9 +102,9 @@ class LibraryAdapter(
             }
             withContext(Dispatchers.Main) {
                 if (holder.bindingAdapterPosition != RecyclerView.NO_POSITION && getItem(holder.bindingAdapterPosition).id == document.id && bitmap != null) {
-                    holder.thumbnail.setImageBitmap(bitmap)
+                    holder.setThumbnail(bitmap)
                 } else {
-                    bitmap?.recycle()
+                    bitmap?.recycleIfNeeded()
                 }
             }
         }
@@ -124,6 +125,7 @@ class LibraryAdapter(
     override fun onViewRecycled(holder: Holder) {
         holder.job?.cancel()
         holder.job = null
+        holder.clearThumbnail()
         super.onViewRecycled(holder)
     }
 
@@ -132,6 +134,20 @@ class LibraryAdapter(
         val title: TextView = view.findViewById(R.id.document_title)
         val meta: TextView = view.findViewById(R.id.document_meta)
         var job: Job? = null
+
+        fun clearThumbnail() {
+            thumbnailBitmap?.recycleIfNeeded()
+            thumbnailBitmap = null
+            thumbnail.setImageDrawable(ColorDrawable(thumbnail.context.getColor(R.color.roman_thumbnail_placeholder)))
+        }
+
+        fun setThumbnail(value: Bitmap) {
+            thumbnailBitmap?.recycleIfNeeded()
+            thumbnailBitmap = value
+            thumbnail.setImageBitmap(value)
+        }
+
+        private var thumbnailBitmap: Bitmap? = null
     }
 
     companion object {
@@ -155,7 +171,7 @@ class PdfPageAdapter(
     private val onStroke: (Stroke) -> Unit,
     private val onErase: (Int, List<Long>) -> Unit
 ) : RecyclerView.Adapter<PdfPageAdapter.Holder>() {
-    private val bitmapCache = PageBitmapCache(maxEntries = 3)
+    private val bitmapCache = PageBitmapCache(maxEntries = 2)
     /** All display and prefetch work for one reader is queued through one dispatcher. */
     @OptIn(ExperimentalCoroutinesApi::class)
     private val renderDispatcher = Dispatchers.IO.limitedParallelism(1)
@@ -164,6 +180,7 @@ class PdfPageAdapter(
     private var currentTool = AnnotationTools.NONE
     private var currentInkWidth = 0.0045f
     private var currentInkColor = Color.rgb(34, 74, 150)
+    private var prefetchDirection = 1
     private var attachedRecycler: RecyclerView? = null
 
     override fun getItemCount(): Int = pageCount
@@ -176,7 +193,15 @@ class PdfPageAdapter(
     )
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.pageView.bind(position, renderer, scope, strokesForPage(position), pageCount, renderDispatcher)
+        holder.pageView.bind(
+            position,
+            renderer,
+            scope,
+            strokesForPage(position),
+            pageCount,
+            renderDispatcher,
+            prefetchDirection
+        )
         holder.pageView.setMode(currentMode)
         holder.pageView.setTool(toolByPage[position] ?: currentTool)
         holder.pageView.setInkWidth(currentInkWidth)
@@ -242,6 +267,27 @@ class PdfPageAdapter(
         }
     }
 
+    fun setPrefetchDirection(direction: Int) {
+        prefetchDirection = if (direction < 0) -1 else 1
+    }
+
+    fun trimForBackground() {
+        attachedRecycler?.let { recycler ->
+            for (index in 0 until itemCount) {
+                (recycler.findViewHolderForAdapterPosition(index) as? Holder)?.pageView?.trimForBackground()
+            }
+        }
+        bitmapCache.clear()
+    }
+
+    fun resumeAfterBackground() {
+        attachedRecycler?.let { recycler ->
+            for (index in 0 until itemCount) {
+                (recycler.findViewHolderForAdapterPosition(index) as? Holder)?.pageView?.requestRenderIfNeeded()
+            }
+        }
+    }
+
     class Holder(val pageView: PdfPageView) : RecyclerView.ViewHolder(pageView)
 }
 
@@ -260,13 +306,13 @@ class PageThumbnailAdapter(
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
         holder.number.text = holder.itemView.context.getString(R.string.page_number, position + 1)
-        holder.image.setImageDrawable(ColorDrawable(Color.rgb(232, 236, 242)))
         holder.job?.cancel()
+        holder.clearThumbnail()
         holder.job = scope.launch(Dispatchers.IO) {
             val bitmap = runCatching { thumbnailStore.getOrCreate(document, renderer, position) }.getOrNull()
             withContext(Dispatchers.Main) {
-                if (holder.bindingAdapterPosition == position && bitmap != null) holder.image.setImageBitmap(bitmap)
-                else bitmap?.recycle()
+                if (holder.bindingAdapterPosition == position && bitmap != null) holder.setThumbnail(bitmap)
+                else bitmap?.recycleIfNeeded()
             }
         }
         holder.itemView.setOnClickListener { onClick(position) }
@@ -275,6 +321,7 @@ class PageThumbnailAdapter(
     override fun onViewRecycled(holder: Holder) {
         holder.job?.cancel()
         holder.job = null
+        holder.clearThumbnail()
         super.onViewRecycled(holder)
     }
 
@@ -282,7 +329,25 @@ class PageThumbnailAdapter(
         val image: ImageView = view.findViewById(R.id.page_thumbnail)
         val number: TextView = view.findViewById(R.id.page_number)
         var job: Job? = null
+
+        fun clearThumbnail() {
+            thumbnailBitmap?.recycleIfNeeded()
+            thumbnailBitmap = null
+            image.setImageDrawable(ColorDrawable(image.context.getColor(R.color.roman_thumbnail_placeholder)))
+        }
+
+        fun setThumbnail(value: Bitmap) {
+            thumbnailBitmap?.recycleIfNeeded()
+            thumbnailBitmap = value
+            image.setImageBitmap(value)
+        }
+
+        private var thumbnailBitmap: Bitmap? = null
     }
+}
+
+private fun Bitmap.recycleIfNeeded() {
+    if (!isRecycled) recycle()
 }
 
 class SearchResultAdapter(

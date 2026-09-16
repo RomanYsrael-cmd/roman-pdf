@@ -56,7 +56,7 @@ enum class PageRenderState {
 }
 
 /** A cache lease keeps a bitmap live for exactly one displayed/prefetch consumer. */
-class PageBitmapCache(private val maxEntries: Int = 3) {
+class PageBitmapCache(private val maxEntries: Int = 2) {
     class Lease internal constructor(
         val key: PageBitmapKey,
         val bitmap: Bitmap
@@ -198,6 +198,7 @@ class PdfPageView(context: Context) : View(context) {
     private var renderScope: CoroutineScope? = null
     private var renderJob: Job? = null
     private var renderDispatcher: CoroutineDispatcher = Dispatchers.IO
+    private var prefetchDirection = 1
     private var boundPageIndex = -1
     private var documentPageCount = 1
     private var bitmap: Bitmap? = null
@@ -279,7 +280,8 @@ class PdfPageView(context: Context) : View(context) {
         scope: CoroutineScope,
         pageStrokes: List<Stroke>,
         pageCount: Int = 1,
-        dispatcher: CoroutineDispatcher = Dispatchers.IO
+        dispatcher: CoroutineDispatcher = Dispatchers.IO,
+        prefetchDirection: Int = 1
     ) {
         if (renderer != null && renderer !== renderEngine) releaseDisplayedBitmap()
         renderJob?.cancel()
@@ -291,6 +293,7 @@ class PdfPageView(context: Context) : View(context) {
         renderer = renderEngine
         renderScope = scope
         renderDispatcher = dispatcher
+        this.prefetchDirection = if (prefetchDirection < 0) -1 else 1
         strokes = pageStrokes
         cancelPendingTap()
         cancelActiveAnnotation()
@@ -364,6 +367,21 @@ class PdfPageView(context: Context) : View(context) {
     fun renderState(): PageRenderState = renderState
 
     fun hasUsableBitmap(): Boolean = bitmap?.isUsablePageBitmap() == true
+
+    /** Releases display memory while the activity is backgrounded; the next start renders again safely. */
+    fun trimForBackground() {
+        renderJob?.cancel()
+        cancelRecovery()
+        renderGate.newBinding()
+        requestedToken = null
+        releaseDisplayedBitmap()
+        renderState = PageRenderState.NOT_REQUESTED
+        invalidate()
+    }
+
+    fun requestRenderIfNeeded() {
+        if (boundPageIndex >= 0 && renderer != null && !hasUsableBitmap()) requestRender()
+    }
 
     fun resetZoom() {
         scaleFactor = 1f
@@ -442,7 +460,7 @@ class PdfPageView(context: Context) : View(context) {
             }
 
             if (cache != null && isActive && renderGate.accepts(token, requestedToken)) {
-                prefetchAdjacent(currentRenderer, page, targetWidth, targetHeight, token, cache)
+                prefetchAdjacent(currentRenderer, page, targetWidth, targetHeight, token, cache, prefetchDirection)
             }
         }
     }
@@ -477,9 +495,10 @@ class PdfPageView(context: Context) : View(context) {
         targetWidth: Int,
         targetHeight: Int,
         token: PageRenderToken,
-        cache: PageBitmapCache
+        cache: PageBitmapCache,
+        direction: Int
     ) {
-        ReaderRenderPolicy.prefetchPages(page, documentPageCount).forEach { adjacentPage ->
+        ReaderRenderPolicy.prefetchPages(page, documentPageCount, direction).forEach { adjacentPage ->
             if (!currentCoroutineContext().isActive) return@forEach
             val adjacentKey = PageBitmapKey(adjacentPage, targetWidth, targetHeight)
             if (cache.contains(adjacentKey)) return@forEach
@@ -534,7 +553,7 @@ class PdfPageView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        canvas.drawColor(Color.rgb(16, 19, 24))
+        canvas.drawColor(context.getColor(R.color.reader_page_background))
         val pageBitmap = bitmap?.takeIf { it.isUsablePageBitmap() }
         if (pageBitmap == null) {
             if (bitmap != null) {
@@ -558,9 +577,9 @@ class PdfPageView(context: Context) : View(context) {
     }
 
     private fun drawRenderPlaceholder(canvas: Canvas) {
-        canvas.drawColor(Color.rgb(236, 240, 245))
+        canvas.drawColor(context.getColor(R.color.reader_placeholder_background))
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.rgb(45, 58, 76)
+            color = context.getColor(R.color.reader_placeholder_ink)
             textAlign = Paint.Align.CENTER
             textSize = 18f * resources.displayMetrics.density
         }
@@ -807,11 +826,7 @@ class PdfPageView(context: Context) : View(context) {
 
     private fun handleTap(x: Float, y: Float) {
         val now = SystemClock.uptimeMillis()
-        val zone = when {
-            x < width * 0.28f -> TapZone.LEFT
-            x > width * 0.72f -> TapZone.RIGHT
-            else -> TapZone.CENTER
-        }
+        val zone = ReaderInteractionPolicy.tapZone(x, width.toFloat())
         val isDoubleTap = zone == TapZone.CENTER && isDoubleTap(now, x, y)
         if (isDoubleTap) {
             cancelPendingTap()

@@ -9,6 +9,7 @@ import com.romanysrael.romanpdf.ui.PageRenderState
 import com.romanysrael.romanpdf.ui.ReaderInteractionPolicy
 import com.romanysrael.romanpdf.ui.ReaderRenderPolicy
 import com.romanysrael.romanpdf.ui.ReaderMode
+import com.romanysrael.romanpdf.ui.TapZone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -48,14 +49,18 @@ class ReaderInteractionTest {
         assertTrue(ReaderInteractionPolicy.usesImmediatePositioning(NavigationSource.TAP))
         assertTrue(ReaderInteractionPolicy.usesImmediatePositioning(NavigationSource.SEARCH))
         assertFalse(ReaderInteractionPolicy.usesImmediatePositioning(NavigationSource.SWIPE))
+        assertEquals(TapZone.LEFT, ReaderInteractionPolicy.tapZone(24f, 800f))
+        assertEquals(TapZone.RIGHT, ReaderInteractionPolicy.tapZone(776f, 800f))
+        assertEquals(TapZone.CENTER, ReaderInteractionPolicy.tapZone(400f, 800f))
     }
 
     @Test
     fun renderTransitionKeepsPreviousFrameAndPrefetchesOnlyNeighbors() {
         assertTrue(ReaderRenderPolicy.shouldRetainDisplayedBitmap(hasDisplayedBitmap = true, hasReplacement = false))
         assertFalse(ReaderRenderPolicy.shouldRetainDisplayedBitmap(hasDisplayedBitmap = true, hasReplacement = true))
-        assertEquals(listOf(0, 2), ReaderRenderPolicy.prefetchPages(pageIndex = 1, pageCount = 3))
-        assertEquals(listOf(0), ReaderRenderPolicy.prefetchPages(pageIndex = 1, pageCount = 2))
+        assertEquals(listOf(2), ReaderRenderPolicy.prefetchPages(pageIndex = 1, pageCount = 3))
+        assertEquals(listOf(0), ReaderRenderPolicy.prefetchPages(pageIndex = 1, pageCount = 3, direction = -1))
+        assertEquals(emptyList<Int>(), ReaderRenderPolicy.prefetchPages(pageIndex = 2, pageCount = 3))
     }
 
     @Test

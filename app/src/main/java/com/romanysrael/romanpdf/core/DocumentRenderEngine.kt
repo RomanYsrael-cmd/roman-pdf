@@ -55,7 +55,7 @@ class DocumentRenderEngine(
             ).coerceAtMost(3f)
             val width = max(1, ceil(page.width * scale).toInt())
             val height = max(1, ceil(page.height * scale).toInt())
-            val safeScale = safeScaleForMemory(width, height)
+            val safeScale = safeScaleForMemory(width, height, forPrint)
             val bitmap = Bitmap.createBitmap(
                 max(1, (width * safeScale).toInt()),
                 max(1, (height * safeScale).toInt()),
@@ -122,9 +122,10 @@ class DocumentRenderEngine(
         context.contentResolver.openFileDescriptor(uri, "r")
     }
 
-    private fun safeScaleForMemory(width: Int, height: Int): Float {
+    private fun safeScaleForMemory(width: Int, height: Int, forPrint: Boolean): Float {
         val bytes = width.toLong() * height.toLong() * 4L
-        return if (bytes <= MAX_BITMAP_BYTES) 1f else kotlin.math.sqrt(MAX_BITMAP_BYTES.toFloat() / bytes)
+        val maxBytes = if (forPrint) MAX_PRINT_BITMAP_BYTES else MAX_DISPLAY_BITMAP_BYTES
+        return if (bytes <= maxBytes) 1f else kotlin.math.sqrt(maxBytes.toFloat() / bytes)
     }
 
     override fun close() {
@@ -140,6 +141,8 @@ class DocumentRenderEngine(
     }
 
     companion object {
-        private const val MAX_BITMAP_BYTES = 24L * 1024L * 1024L
+        /** Display pages are capped conservatively; print/export retains a larger working budget. */
+        private const val MAX_DISPLAY_BITMAP_BYTES = 16L * 1024L * 1024L
+        private const val MAX_PRINT_BITMAP_BYTES = 32L * 1024L * 1024L
     }
 }

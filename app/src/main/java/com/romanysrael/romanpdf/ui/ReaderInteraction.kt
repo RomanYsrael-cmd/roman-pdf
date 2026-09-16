@@ -14,8 +14,18 @@ enum class NavigationSource {
 }
 
 object ReaderInteractionPolicy {
+    private const val EDGE_TAP_FRACTION = 0.32f
+
     fun canDraw(mode: ReaderMode, tool: String): Boolean =
         mode == ReaderMode.EDIT && tool != AnnotationTools.NONE
+
+    /** Music-reading taps deliberately reserve generous edge bands for page turns. */
+    fun tapZone(x: Float, width: Float): TapZone = when {
+        width <= 0f -> TapZone.CENTER
+        x < width * EDGE_TAP_FRACTION -> TapZone.LEFT
+        x > width * (1f - EDGE_TAP_FRACTION) -> TapZone.RIGHT
+        else -> TapZone.CENTER
+    }
 
     fun usesImmediatePositioning(source: NavigationSource): Boolean =
         source != NavigationSource.SWIPE
@@ -25,11 +35,14 @@ object ReaderInteractionPolicy {
 
 object ReaderRenderPolicy {
     /** The adjacent working set is intentionally bounded to keep the reader responsive on tablets. */
-    fun prefetchPages(pageIndex: Int, pageCount: Int): List<Int> = listOf(pageIndex - 1, pageIndex + 1)
-        .filter { it in 0 until pageCount }
+    fun prefetchPages(pageIndex: Int, pageCount: Int, direction: Int = 1): List<Int> {
+        val preferred = if (direction < 0) pageIndex - 1 else pageIndex + 1
+        return listOf(preferred).filter { it in 0 until pageCount }
+    }
 
     fun shouldRetainDisplayedBitmap(hasDisplayedBitmap: Boolean, hasReplacement: Boolean): Boolean =
         hasDisplayedBitmap && !hasReplacement
+
 }
 
 data class NormalizedPagePoint(val x: Float, val y: Float)

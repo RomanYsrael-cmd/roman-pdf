@@ -10,16 +10,16 @@ Measured through ADB during this implementation:
 - ABI: arm64-v8a
 - Physical display: 800×1280
 - `/proc/meminfo` at inspection: 3,852,040 kB total, 2,130,428 kB available
-- Final debug APK: 46,323,262 bytes; R8/resource-shrunk release APK: 38,849,895 bytes (unsigned).
+- Final debug APK: 46,217,799 bytes; signed release APK: 38,865,601 bytes; release AAB: 23,903,966 bytes. Release signing is optional; this verification used the ignored local QA key and it is never committed.
 
 ## Decisions made for the device
 
 - `PdfRenderer` is the display path; PDFBox is limited to on-demand text indexing.
 - The reader is a horizontally paged RecyclerView with no all-pages bitmap list.
-- Page bitmaps are display-sized and capped at 24 MiB per render; a three-entry reference-counted reader cache retains the visible page and bounded neighbors.
+- Page bitmaps are display-sized and capped at 16 MiB per display render; a two-entry reference-counted reader cache retains the visible page and one direction-aware neighbor. Export keeps a separate 32 MiB cap for quality.
 - A single synchronized renderer plus a reader-local single-lane dispatcher serializes display and prefetch work and closes every `PdfRenderer.Page` immediately.
 - Image pages use bounds-only inspection plus sampled decode; startup never loads every image page.
-- Thumbnails are lazy and cached as lossy WebP; startup does not parse every library PDF or eagerly decode every grid tile.
+- Thumbnails are lazy and cached as lossy WebP; PDF thumbnails target 192×256 and use RGB_565, while startup does not parse every library PDF or eagerly decode every grid tile.
 - Touch events are accumulated in memory and strokes are inserted after a gesture, not on every MotionEvent.
 - Indexing and recognition run only when needed; no periodic background service is used.
 
@@ -33,15 +33,15 @@ The edit gesture path does not poll or run a recognizer: one-finger strokes are 
 
 The target device used the restored 146-document library and the 276-page `THE WILDS  8th Edition (1).pdf` sample. The pre-fix baseline reproduced the defect in 328 of 500 screenshot samples (65.6%) during 1,000 mixed tap/swipe/zoom operations. The first fixed-renderer pass recorded 0 of 500 blank signals; the final cache-ownership pass also recorded 0 of 500 blank signals and 0 process-death signals. Both runs kept `ReaderActivity` in the foreground. The final pass wrote screenshot CSV, periodic memory samples, and filtered logcat evidence under the ignored `work/` directory; the repeatable driver is `tools/device-navigation-stress.ps1`.
 
-For the final corrected build, the stress trace's 50 PSS samples ranged from 132,740 kB to 139,600 kB (average 135,716 kB; last sample 138,249 kB). The post-run `dumpsys meminfo` snapshot was 137,629 kB total PSS, including approximately 44,897 kB graphics and 41,227 kB GL tracking. PSS includes the tablet's graphics/GL allocations and is not a Java-heap-only number. The cache remains bounded at three page entries and the final trace showed no monotonically increasing bitmap-retention pattern. Reliability takes precedence over forcing the preferred sub-100 MB reader target on this large, graphics-heavy sample; future profiling should revisit render scale and GPU texture pressure with representative PDFs.
+The current milestone repeats the same workload on the 222-page `music-theory.pdf` sample after reducing the display budget, page cache, prefetch breadth, and thumbnail working size. The 1,000-operation trace completed with 500 screenshot samples, 0 blank signals, 0 process-death signals, and 0 filtered reliability log lines. Its 50 PSS samples ranged from 104,135 kB to 124,751 kB (average 115,376 kB; last sample 118,747 kB); the post-run `dumpsys meminfo` snapshot was 115,057 kB. Compared with the prior 137,629 kB post-run snapshot, this is a 22,572 kB reduction (16.4%); compared with the prior 135,716 kB stress average, the new average is 20,340 kB lower (15.0%). PSS includes graphics/GL allocations and is not a Java-heap-only number. The preferred sub-100 MB target remains an aspiration for this graphics-heavy sample, while the observed average and post-run values stay in the accepted 110–125 MB band; reliability takes precedence and the cache is intentionally bounded at two page entries.
 
-Opening the long PDF after reinstall displayed a valid page image immediately. The operation-1,000 stress screenshot showed the light preparing state during an in-flight navigation request (never the old dark blank), and a five-second idle capture then showed a valid rendered page. Search, sort/view persistence, fullscreen recovery, image-document paging, annotation interactions, exports, and external PDF open were also smoke-tested on the target tablet. The stress runner found no `RomanPdfRender`, `FATAL EXCEPTION`, or `ANR in` line.
+Opening the PDF through a real tablet `content://` provider URI displayed a valid page image immediately. Fullscreen hid the status/navigation bars and app chrome, center tap restored temporary chrome, chrome auto-hide returned to a valid page, and wide left/right tap zones moved between page 1 and page 2. Search, sort/view persistence, image-document paging, annotation interactions, exports, and external PDF open were smoke-tested on the target tablet. The final stress runner result is recorded below and checks for `RomanPdfRender`, `FATAL EXCEPTION`, and `ANR in` lines.
 
 Cold start, import, reader open, paging, annotation persistence, FTS search, page PNG export, annotated PDF export, Sharesheet launch, list/grid switching, fullscreen recovery, external `ACTION_VIEW`, and a six-page image document were exercised on the tablet. Further profiling with large, complex PDFs is still recommended before treating those measurements as universal targets.
 
 ## Final build checklist
 
-The final release of this milestone was rebuilt with both `assembleDebug` and `assembleRelease`; the resulting byte sizes are recorded in the device section above. The debug install remains separate from the release application ID through the `.debug` suffix.
+The final release of this milestone is rebuilt with `assembleDebug` and `assembleRelease`; `bundleRelease` and `apksigner verify` are also used when the local validation key is available. The final debug APK is 46,217,799 bytes, the signed release APK is 38,865,601 bytes, and the release AAB is 23,903,966 bytes. The APK verifies with v2 signing using the ignored local QA key; production distribution must use a protected organization key. The debug install remains separate from the release application ID through the `.debug` suffix.
 
 ## Known performance limits
 

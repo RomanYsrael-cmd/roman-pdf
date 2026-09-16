@@ -1,3 +1,26 @@
+import java.util.Properties
+
+val releaseSigningProperties = Properties()
+val releaseSigningFile = rootProject.file("signing.properties")
+if (releaseSigningFile.isFile) {
+    releaseSigningFile.inputStream().use(releaseSigningProperties::load)
+}
+
+fun signingValue(property: String, environment: String): String? =
+    releaseSigningProperties.getProperty(property)?.takeIf(String::isNotBlank)
+        ?: System.getenv(environment)?.takeIf(String::isNotBlank)
+
+val releaseStoreFile = signingValue("storeFile", "ROMAN_PDF_STORE_FILE")
+val releaseStorePassword = signingValue("storePassword", "ROMAN_PDF_STORE_PASSWORD")
+val releaseKeyAlias = signingValue("keyAlias", "ROMAN_PDF_KEY_ALIAS")
+val releaseKeyPassword = signingValue("keyPassword", "ROMAN_PDF_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -12,10 +35,21 @@ android {
         applicationId = "com.romanysrael.romanpdf"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 5
+        versionName = "0.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     buildTypes {
@@ -30,6 +64,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

@@ -1,0 +1,6 @@
+# Copy to signing.properties and replace every placeholder.
+# Keep signing.properties and the keystore out of version control.
+storeFile=work/roman-pdf-release.keystore
+storePassword=<local secret>
+keyAlias=roman-pdf
+keyPassword=<local secret>

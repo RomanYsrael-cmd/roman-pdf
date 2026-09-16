@@ -2,17 +2,20 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="6dp"
-    android:background="@color/roman_surface"
+    android:layout_margin="5dp"
+    android:background="@drawable/library_card_background"
+    android:clickable="true"
+    android:focusable="true"
     android:orientation="vertical"
     android:padding="8dp">
 
     <ImageView
         android:id="@+id/document_thumbnail"
         android:layout_width="match_parent"
-        android:layout_height="170dp"
-        android:background="@color/roman_thumbnail_placeholder"
+        android:layout_height="182dp"
+        android:background="@drawable/library_thumbnail_background"
         android:contentDescription="@string/page"
+        android:padding="3dp"
         android:scaleType="centerInside" />
 
     <TextView
@@ -23,7 +26,8 @@
         android:ellipsize="end"
         android:maxLines="2"
         android:textColor="@color/roman_on_surface"
-        android:textSize="16sp"
+        android:lineSpacingExtra="1dp"
+        android:textSize="15sp"
         android:textStyle="bold" />
 
     <TextView
@@ -34,5 +38,5 @@
         android:ellipsize="end"
         android:maxLines="2"
         android:textColor="@color/roman_on_surface_variant"
-        android:textSize="12sp" />
+        android:textSize="11sp" />
 </LinearLayout>

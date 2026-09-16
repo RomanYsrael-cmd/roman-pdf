@@ -10,7 +10,9 @@ import android.view.Gravity
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.WindowManager
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.ImageButton
 import android.widget.PopupWindow
@@ -20,11 +22,13 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -73,6 +77,8 @@ class ReaderActivity : AppCompatActivity() {
     private var highlighterColor = Color.YELLOW
     private var chromeVisible = true
     private var fullscreenEnabled = false
+    private var keepScreenOn = false
+    private var chromeHideRunnable: Runnable? = null
     private var bookmarkedPages: Set<Int> = emptySet()
     private val strokesByPage = HashMap<Int, MutableList<Stroke>>()
     private val loadedPages = HashSet<Int>()
@@ -85,7 +91,6 @@ class ReaderActivity : AppCompatActivity() {
         setContentView(R.layout.activity_reader)
 
         readerRoot = findViewById(R.id.reader_root)
-        installWindowInsets()
         toolbar = findViewById(R.id.reader_toolbar)
         setSupportActionBar(toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
@@ -98,6 +103,9 @@ class ReaderActivity : AppCompatActivity() {
         modeButton = findViewById(R.id.mode_button)
         modeIndicator = findViewById(R.id.mode_indicator)
         colorButton = findViewById(R.id.color_button)
+        installWindowInsets()
+        window.statusBarColor = getColor(R.color.roman_blue_dark)
+        window.navigationBarColor = getColor(R.color.reader_page_background)
 
         penWidthIndex = preferences.getInt(PREF_PEN_WIDTH, 1).coerceIn(0, PEN_WIDTHS.lastIndex)
         penColor = preferences.getInt(PREF_PEN_COLOR, Color.BLACK)
@@ -107,7 +115,16 @@ class ReaderActivity : AppCompatActivity() {
         } ?: ReaderMode.VIEW
         currentTool = if (readerMode == ReaderMode.EDIT) AnnotationTools.PEN else AnnotationTools.NONE
         fullscreenEnabled = savedInstanceState?.getBoolean(KEY_FULLSCREEN)
-            ?: preferences.getBoolean(PREF_FULLSCREEN, false)
+            ?: preferences.getBoolean(PREF_FULLSCREEN, true)
+        keepScreenOn = savedInstanceState?.getBoolean(KEY_KEEP_SCREEN_ON)
+            ?: preferences.getBoolean(PREF_KEEP_SCREEN_ON, false)
+        applyKeepScreenOn()
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (fullscreenEnabled) setFullscreen(false) else finish()
+            }
+        })
 
         modeButton.setOnClickListener {
             setReaderMode(if (readerMode == ReaderMode.VIEW) ReaderMode.EDIT else ReaderMode.VIEW)
@@ -161,12 +178,20 @@ class ReaderActivity : AppCompatActivity() {
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             val insetContent = !fullscreenEnabled
-            view.setPadding(
-                if (insetContent) max(bars.left, cutout.left) else 0,
-                if (insetContent) max(bars.top, cutout.top) else 0,
-                if (insetContent) max(bars.right, cutout.right) else 0,
-                if (insetContent) max(bars.bottom, cutout.bottom) else 0
-            )
+            val left = if (insetContent) max(bars.left, cutout.left) else 0
+            val top = if (insetContent) max(bars.top, cutout.top) else 0
+            val right = if (insetContent) max(bars.right, cutout.right) else 0
+            val bottom = if (insetContent) max(bars.bottom, cutout.bottom) else 0
+
+            view.setPadding(left, 0, right, 0)
+            toolbar.setPadding(toolbar.paddingLeft, top, toolbar.paddingRight, toolbar.paddingBottom)
+            toolbar.layoutParams = (toolbar.layoutParams as? FrameLayout.LayoutParams)?.apply {
+                height = dp(56) + top
+            } ?: toolbar.layoutParams
+            controls?.setPadding(dp(12), dp(6), dp(12), dp(6) + bottom)
+            (controls?.layoutParams as? FrameLayout.LayoutParams)?.apply {
+                bottomMargin = if (insetContent) 0 else dp(12)
+            }?.let { controls?.layoutParams = it }
             pageList?.requestLayout()
             insets
         }
@@ -176,22 +201,37 @@ class ReaderActivity : AppCompatActivity() {
     private fun setFullscreen(enabled: Boolean, persist: Boolean = true) {
         fullscreenEnabled = enabled
         if (persist) preferences.edit().putBoolean(PREF_FULLSCREEN, enabled).apply()
+        window.navigationBarColor = getColor(R.color.reader_page_background)
         val controller = WindowCompat.getInsetsController(window, window.decorView)
-        controller.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (enabled) controller.hide(WindowInsetsCompat.Type.systemBars())
-        else controller.show(WindowInsetsCompat.Type.systemBars())
-        setChromeVisible(!enabled)
-        if (enabled) readerRoot.setPadding(0, 0, 0, 0)
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (enabled) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            setChromeVisible(false)
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+            setChromeVisible(true)
+        }
         ViewCompat.requestApplyInsets(readerRoot)
         pageList?.requestLayout()
         pageList?.invalidate()
         invalidateOptionsMenu()
     }
 
-    private fun setChromeVisible(visible: Boolean) {
+    private fun setChromeVisible(visible: Boolean, autoHide: Boolean = false) {
+        chromeHideRunnable?.let(readerRoot::removeCallbacks)
+        chromeHideRunnable = null
         chromeVisible = visible
         toolbar.visibility = if (visible) View.VISIBLE else View.GONE
         controls?.visibility = if (visible) View.VISIBLE else View.GONE
+        if (visible && autoHide && fullscreenEnabled && readerMode == ReaderMode.VIEW) {
+            val hide = Runnable {
+                chromeHideRunnable = null
+                if (fullscreenEnabled && readerMode == ReaderMode.VIEW) setChromeVisible(false)
+            }
+            chromeHideRunnable = hide
+            readerRoot.postDelayed(hide, CHROME_AUTO_HIDE_MS)
+        }
+        invalidateOptionsMenu()
     }
 
     private fun configurePager() {
@@ -256,7 +296,11 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun onPageSettled(page: Int) {
-        currentPage = page.coerceIn(0, pageCount - 1)
+        val settledPage = page.coerceIn(0, pageCount - 1)
+        if (settledPage != currentPage) {
+            pageAdapter?.setPrefetchDirection(if (settledPage > currentPage) 1 else -1)
+        }
+        currentPage = settledPage
         supportActionBar?.subtitle = getString(R.string.reader_page, currentPage + 1, pageCount)
         invalidateOptionsMenu()
         lifecycleScope.launch { app.repository.updateLastPage(documentId, currentPage) }
@@ -280,6 +324,9 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun goToPage(page: Int, source: NavigationSource = NavigationSource.PAGE_JUMP) {
         if (page !in 0 until pageCount) return
+        if (page != currentPage) {
+            pageAdapter?.setPrefetchDirection(if (page > currentPage) 1 else -1)
+        }
         if (ReaderInteractionPolicy.usesImmediatePositioning(source)) {
             pageList?.scrollToPosition(page)
             onPageSettled(page)
@@ -300,6 +347,10 @@ class ReaderActivity : AppCompatActivity() {
         pageAdapter?.setInkWidth(PEN_WIDTHS[penWidthIndex])
         pageAdapter?.setInkColor(activeInkColor())
         updateModeUi()
+        if (fullscreenEnabled) {
+            if (newMode == ReaderMode.EDIT) setChromeVisible(true)
+            else setChromeVisible(true, autoHide = true)
+        }
         if (announce) {
             Toast.makeText(
                 this,
@@ -328,6 +379,9 @@ class ReaderActivity : AppCompatActivity() {
         styleToggle(findViewById(R.id.pen_button), currentTool == AnnotationTools.PEN, selectedColor)
         styleToggle(findViewById(R.id.highlighter_button), currentTool == AnnotationTools.HIGHLIGHT, selectedColor)
         styleToggle(findViewById(R.id.eraser_button), currentTool == AnnotationTools.ERASER, selectedColor)
+        listOf(R.id.undo_button, R.id.redo_button, R.id.note_button).forEach { id ->
+            findViewById<ImageButton>(id).imageTintList = ColorStateList.valueOf(getColor(R.color.reader_chrome_ink))
+        }
         colorButton.imageTintList = ColorStateList.valueOf(activeInkColor())
         colorButton.contentDescription = getString(R.string.annotation_color, colorName(activeInkColor()))
         colorButton.backgroundTintList = ColorStateList.valueOf(selectedColor)
@@ -404,7 +458,18 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun toggleControls() {
-        setChromeVisible(!chromeVisible)
+        setChromeVisible(!chromeVisible, autoHide = !chromeVisible && fullscreenEnabled && readerMode == ReaderMode.VIEW)
+    }
+
+    private fun applyKeepScreenOn() {
+        if (keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private fun setKeepScreenOn(enabled: Boolean) {
+        keepScreenOn = enabled
+        preferences.edit().putBoolean(PREF_KEEP_SCREEN_ON, enabled).apply()
+        applyKeepScreenOn()
     }
 
     private fun showNoteEditor() {
@@ -633,6 +698,7 @@ class ReaderActivity : AppCompatActivity() {
         menu.findItem(R.id.action_fullscreen)?.title = getString(
             if (fullscreenEnabled) R.string.exit_fullscreen else R.string.enter_fullscreen
         )
+        menu.findItem(R.id.action_keep_screen_on)?.isChecked = keepScreenOn
         menu.findItem(R.id.action_bookmark)?.apply {
             val isBookmarked = currentPage in bookmarkedPages
             icon = AppCompatResources.getDrawable(
@@ -652,6 +718,7 @@ class ReaderActivity : AppCompatActivity() {
         R.id.action_recognize -> { recognizeCurrentPage(); true }
         R.id.action_jump -> { showPageJump(); true }
         R.id.action_fullscreen -> { setFullscreen(!fullscreenEnabled); true }
+        R.id.action_keep_screen_on -> { setKeepScreenOn(!keepScreenOn); true }
         android.R.id.home -> { finish(); true }
         else -> super.onOptionsItemSelected(item)
     }
@@ -660,10 +727,41 @@ class ReaderActivity : AppCompatActivity() {
         outState.putInt(KEY_PAGE, currentPage)
         outState.putString(KEY_MODE, readerMode.name)
         outState.putBoolean(KEY_FULLSCREEN, fullscreenEnabled)
+        outState.putBoolean(KEY_KEEP_SCREEN_ON, keepScreenOn)
         super.onSaveInstanceState(outState)
     }
 
+    override fun onStart() {
+        super.onStart()
+        pageAdapter?.resumeAfterBackground()
+    }
+
+    override fun onStop() {
+        if (!isChangingConfigurations && !isFinishing) pageAdapter?.trimForBackground()
+        super.onStop()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            pageAdapter?.trimForBackground()
+        }
+        super.onTrimMemory(level)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && fullscreenEnabled && !isFinishing) {
+            window.decorView.post {
+                if (hasWindowFocus() && fullscreenEnabled) {
+                    WindowCompat.getInsetsController(window, window.decorView)
+                        .hide(WindowInsetsCompat.Type.systemBars())
+                }
+            }
+        }
+    }
+
     override fun onDestroy() {
+        chromeHideRunnable?.let(readerRoot::removeCallbacks)
         pageAdapter?.setMode(ReaderMode.VIEW)
         engine?.close()
         engine = null
@@ -755,11 +853,14 @@ class ReaderActivity : AppCompatActivity() {
         private const val KEY_PAGE = "page"
         private const val KEY_MODE = "reader_mode"
         private const val KEY_FULLSCREEN = "reader_fullscreen"
+        private const val KEY_KEEP_SCREEN_ON = "reader_keep_screen_on"
         private const val PREFERENCES = "reader_preferences"
         private const val PREF_FULLSCREEN = "fullscreen"
+        private const val PREF_KEEP_SCREEN_ON = "keep_screen_on"
         private const val PREF_PEN_WIDTH = "pen_width"
         private const val PREF_PEN_COLOR = "pen_color"
         private const val PREF_HIGHLIGHT_COLOR = "highlighter_color"
+        private const val CHROME_AUTO_HIDE_MS = 2_800L
         private val PEN_WIDTHS = floatArrayOf(0.0028f, 0.0045f, 0.0075f)
         private val INK_PALETTE = listOf(
             PaletteColor("Black", Color.BLACK),

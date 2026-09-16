@@ -14,6 +14,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
 import androidx.appcompat.widget.Toolbar
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -34,6 +37,7 @@ class MainActivity : AppCompatActivity() {
     private val preferences by lazy { getSharedPreferences(PREFERENCES, MODE_PRIVATE) }
     private lateinit var toolbar: Toolbar
     private lateinit var toolbarBrand: View
+    private lateinit var libraryRoot: View
     private lateinit var adapter: LibraryAdapter
     private lateinit var emptyView: View
     private lateinit var libraryList: RecyclerView
@@ -50,10 +54,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        libraryRoot = findViewById(R.id.main_root)
         toolbar = findViewById(R.id.main_toolbar)
         toolbarBrand = findViewById(R.id.main_toolbar_brand)
+        installLibraryInsets()
+        window.navigationBarColor = getColor(R.color.roman_paper)
         setSupportActionBar(toolbar)
         supportActionBar?.setDisplayShowTitleEnabled(false)
 
@@ -80,6 +88,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
         handleIncomingIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun installLibraryInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(libraryRoot) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            view.setPadding(
+                maxOf(bars.left, cutout.left),
+                maxOf(bars.top, cutout.top),
+                maxOf(bars.right, cutout.right),
+                maxOf(bars.bottom, cutout.bottom)
+            )
+            insets
+        }
+        ViewCompat.requestApplyInsets(libraryRoot)
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {

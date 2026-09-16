@@ -5,9 +5,19 @@
     <color name="roman_paper">#101318</color>
     <color name="roman_muted">#B5C0D0</color>
     <color name="roman_surface">#1B222C</color>
+    <color name="roman_surface_elevated">#1F2833</color>
+    <color name="roman_surface_pressed">#2A3B57</color>
     <color name="roman_on_surface">#F2F4F7</color>
     <color name="roman_on_surface_variant">#C2CBD8</color>
     <color name="roman_outline">#596778</color>
     <color name="roman_thumbnail_placeholder">#2A3441</color>
     <color name="roman_search_highlight">#806B24</color>
+    <color name="reader_page_background">#0C1117</color>
+    <color name="reader_placeholder_background">#E7EDF4</color>
+    <color name="reader_placeholder_ink">#1E2936</color>
+    <color name="reader_chrome">#1B222C</color>
+    <color name="reader_chrome_ink">#F2F4F7</color>
+    <color name="reader_chrome_outline">#596778</color>
+    <color name="reader_chrome_divider">#465365</color>
+    <color name="reader_mode_chip">#2A3B57</color>
 </resources>

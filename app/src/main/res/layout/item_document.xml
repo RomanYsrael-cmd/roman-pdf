@@ -2,22 +2,25 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginStart="12dp"
+    android:layout_marginStart="8dp"
     android:layout_marginTop="4dp"
-    android:layout_marginEnd="12dp"
+    android:layout_marginEnd="8dp"
     android:layout_marginBottom="4dp"
-    android:background="@color/roman_surface"
+    android:background="@drawable/library_card_background"
+    android:clickable="true"
+    android:focusable="true"
     android:gravity="center_vertical"
-    android:minHeight="84dp"
+    android:minHeight="80dp"
     android:orientation="horizontal"
     android:padding="8dp">
 
     <ImageView
         android:id="@+id/document_thumbnail"
-        android:layout_width="64dp"
-        android:layout_height="72dp"
-        android:background="@color/roman_thumbnail_placeholder"
+        android:layout_width="60dp"
+        android:layout_height="68dp"
+        android:background="@drawable/library_thumbnail_background"
         android:contentDescription="@string/page"
+        android:padding="2dp"
         android:scaleType="centerInside" />
 
     <LinearLayout
@@ -34,7 +37,7 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:textColor="@color/roman_on_surface"
-            android:textSize="17sp"
+            android:textSize="16sp"
             android:textStyle="bold" />
 
         <TextView
@@ -43,6 +46,6 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:textColor="@color/roman_on_surface_variant"
-            android:textSize="13sp" />
+            android:textSize="12sp" />
     </LinearLayout>
 </LinearLayout>

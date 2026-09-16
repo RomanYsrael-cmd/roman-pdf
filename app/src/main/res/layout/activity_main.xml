@@ -1,17 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/roman_paper"
     android:orientation="vertical">
 
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/main_toolbar"
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
+        android:layout_height="52dp"
         android:background="@color/roman_blue"
-        android:elevation="2dp"
-        android:minHeight="48dp"
+        android:elevation="1dp"
+        android:minHeight="52dp"
         app:contentInsetStartWithNavigation="0dp">
 
         <LinearLayout
@@ -20,12 +22,12 @@
             android:layout_height="match_parent"
             android:layout_gravity="start"
             android:gravity="center_vertical"
-            android:paddingStart="8dp"
+            android:paddingStart="4dp"
             android:paddingEnd="8dp">
 
             <ImageView
-                android:layout_width="34dp"
-                android:layout_height="34dp"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
                 android:contentDescription="@string/app_name"
                 android:scaleType="centerInside"
                 android:src="@drawable/roman_pdf_icon" />
@@ -33,10 +35,10 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="7dp"
                 android:text="@string/app_name"
                 android:textColor="@android:color/white"
-                android:textSize="19sp"
+                android:textSize="18sp"
                 android:textStyle="bold" />
         </LinearLayout>
     </androidx.appcompat.widget.Toolbar>
@@ -51,8 +53,8 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
-            android:paddingTop="8dp"
-            android:paddingBottom="16dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="12dp"
             android:scrollbars="vertical" />
 
         <LinearLayout
